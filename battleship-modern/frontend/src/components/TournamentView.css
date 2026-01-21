@@ -1,0 +1,245 @@
+.tournament-view {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+.loading {
+  text-align: center;
+  padding: 4rem;
+  color: var(--text-secondary);
+}
+
+/* Header */
+.tournament-header {
+  text-align: center;
+}
+
+.tournament-header h2 {
+  margin-bottom: 0.5rem;
+}
+
+.tournament-info {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: center;
+  color: var(--text-secondary);
+  font-size: 0.875rem;
+}
+
+/* Current Match */
+.current-match {
+  background: var(--bg-secondary);
+  padding: 2rem;
+  border-radius: 8px;
+  text-align: center;
+}
+
+.match-progress {
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+  margin-bottom: 1rem;
+}
+
+.match-players {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 2rem;
+  margin-bottom: 1.5rem;
+}
+
+.match-player {
+  font-size: 1.5rem;
+  font-weight: bold;
+}
+
+.match-vs {
+  color: var(--accent);
+  font-size: 1.25rem;
+}
+
+.progress-bar {
+  height: 8px;
+  background: var(--bg-card);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.3s ease;
+}
+
+/* Winner Announcement */
+.winner-announcement {
+  background: linear-gradient(135deg, var(--bg-secondary), var(--bg-card));
+  padding: 3rem;
+  border-radius: 8px;
+  text-align: center;
+  border: 2px solid var(--accent);
+  animation: winner-glow 2s ease-in-out infinite alternate;
+}
+
+@keyframes winner-glow {
+  from {
+    box-shadow: 0 0 20px rgba(74, 158, 255, 0.3);
+  }
+  to {
+    box-shadow: 0 0 40px rgba(74, 158, 255, 0.5);
+  }
+}
+
+.trophy {
+  font-size: 4rem;
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.winner-announcement h3 {
+  color: var(--text-secondary);
+  margin-bottom: 0.5rem;
+}
+
+.winner-name {
+  font-size: 2.5rem;
+  font-weight: bold;
+  background: linear-gradient(90deg, var(--accent), var(--success));
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  margin-bottom: 0.5rem;
+}
+
+.winner-stats {
+  color: var(--text-secondary);
+}
+
+/* Leaderboard */
+.leaderboard {
+  background: var(--bg-secondary);
+  padding: 1.5rem;
+  border-radius: 8px;
+}
+
+.leaderboard h3 {
+  margin-bottom: 1rem;
+}
+
+.leaderboard table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.leaderboard th,
+.leaderboard td {
+  padding: 0.75rem;
+  text-align: left;
+  border-bottom: 1px solid var(--bg-card);
+}
+
+.leaderboard th {
+  color: var(--text-secondary);
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.leaderboard tr.winner {
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.leaderboard .rank {
+  width: 40px;
+  text-align: center;
+}
+
+.leaderboard .player-name {
+  font-weight: bold;
+}
+
+.leaderboard .wins {
+  color: var(--success);
+}
+
+.leaderboard .losses {
+  color: var(--hit);
+}
+
+.leaderboard .win-rate {
+  color: var(--accent);
+}
+
+.leaderboard .accuracy {
+  color: var(--text-secondary);
+}
+
+.leaderboard .shots {
+  color: var(--text-secondary);
+}
+
+/* Event Log */
+.event-log {
+  background: var(--bg-secondary);
+  padding: 1rem;
+  border-radius: 8px;
+  max-height: 200px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.event-log h4 {
+  margin-bottom: 0.5rem;
+  color: var(--text-secondary);
+}
+
+.event-list {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.event {
+  padding: 0.5rem;
+  font-size: 0.875rem;
+  border-radius: 4px;
+  margin-bottom: 0.25rem;
+}
+
+.event.tournament_start {
+  background: rgba(74, 158, 255, 0.2);
+  color: var(--accent);
+}
+
+.event.match_start {
+  color: var(--text-secondary);
+}
+
+.event.match_end {
+  background: rgba(74, 255, 74, 0.1);
+  color: var(--success);
+}
+
+.event.tournament_end {
+  background: rgba(255, 215, 0, 0.2);
+  color: gold;
+  font-weight: bold;
+}
+
+/* Responsive */
+@media (max-width: 600px) {
+  .match-players {
+    flex-direction: column;
+    gap: 0.5rem;
+  }
+
+  .leaderboard table {
+    font-size: 0.875rem;
+  }
+
+  .leaderboard th,
+  .leaderboard td {
+    padding: 0.5rem;
+  }
+}

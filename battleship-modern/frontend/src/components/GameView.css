@@ -1,0 +1,250 @@
+.game-view {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+}
+
+/* Controls */
+.game-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-secondary);
+  padding: 1.5rem;
+  border-radius: 8px;
+}
+
+.player-select {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.player-select label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.player-select select {
+  background: var(--bg-card);
+  border: 1px solid var(--text-secondary);
+  color: var(--text-primary);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 1rem;
+  cursor: pointer;
+}
+
+.player-select select:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.vs {
+  font-size: 1.25rem;
+  font-weight: bold;
+  color: var(--accent);
+}
+
+.start-button {
+  background: var(--accent);
+  border: none;
+  color: var(--bg-primary);
+  padding: 0.75rem 2rem;
+  border-radius: 4px;
+  font-size: 1rem;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.start-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+  transform: translateY(-2px);
+}
+
+.start-button:disabled {
+  opacity: 0.7;
+  cursor: not-allowed;
+}
+
+.speed-control label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.speed-control input[type='range'] {
+  width: 100px;
+}
+
+/* Game Arena */
+.game-arena {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.boards-container {
+  display: flex;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 2rem;
+  flex-wrap: wrap;
+}
+
+.board-wrapper {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.player-stats {
+  display: flex;
+  gap: 1.5rem;
+  font-size: 0.875rem;
+  color: var(--text-secondary);
+}
+
+.vs-divider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+}
+
+.vs-divider span {
+  font-size: 2rem;
+  font-weight: bold;
+  color: var(--text-secondary);
+}
+
+.turn-indicator {
+  background: var(--bg-card);
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  color: var(--accent);
+}
+
+/* Winner Banner */
+.winner-banner {
+  text-align: center;
+  font-size: 2rem;
+  font-weight: bold;
+  padding: 1rem;
+  background: linear-gradient(90deg, transparent, var(--bg-card), transparent);
+  animation: winner-glow 1s ease-in-out infinite alternate;
+}
+
+@keyframes winner-glow {
+  from {
+    text-shadow: 0 0 10px var(--accent);
+  }
+  to {
+    text-shadow: 0 0 20px var(--accent), 0 0 30px var(--success);
+  }
+}
+
+/* Events Log */
+.events-log {
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 1rem;
+  max-height: 200px;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.events-log h4 {
+  margin-bottom: 0.5rem;
+  color: var(--text-secondary);
+}
+
+.events-list {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.event-item {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0.5rem;
+  font-size: 0.875rem;
+  border-radius: 4px;
+  animation: slide-in 0.3s ease-out;
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateX(-10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+.event-item.hit {
+  background: rgba(255, 74, 74, 0.2);
+}
+
+.event-item.sunk {
+  background: rgba(255, 74, 74, 0.4);
+}
+
+.event-item.miss {
+  background: rgba(74, 74, 106, 0.2);
+}
+
+.event-icon {
+  font-size: 1rem;
+}
+
+.event-player {
+  color: var(--accent);
+  font-weight: bold;
+  min-width: 120px;
+}
+
+.event-action {
+  color: var(--text-primary);
+}
+
+.event-pos {
+  color: var(--text-secondary);
+  margin-left: auto;
+}
+
+/* Placeholder */
+.game-placeholder {
+  text-align: center;
+  padding: 4rem;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+/* Responsive */
+@media (max-width: 800px) {
+  .boards-container {
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .vs-divider {
+    flex-direction: row;
+  }
+}

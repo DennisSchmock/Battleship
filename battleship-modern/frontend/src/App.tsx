@@ -4,9 +4,10 @@ import { TournamentSetup } from './components/TournamentSetup'
 import { TournamentView } from './components/TournamentView'
 import { GameView } from './components/GameView'
 import { SpaceGameView } from './components/SpaceGameView'
+import { MatchView } from './components/MatchView'
 import './App.css'
 
-type View = 'home' | 'tournament-setup' | 'tournament' | 'game' | 'space-game'
+type View = 'home' | 'tournament-setup' | 'tournament' | 'game' | 'space-game' | 'match'
 
 function App() {
   const [view, setView] = useState<View>('home')
@@ -31,28 +32,29 @@ function App() {
             Home
           </button>
           <button
-            className={view === 'space-game' ? 'active' : ''}
-            onClick={() => setView('space-game')}
+            className={view === 'match' ? 'active' : ''}
+            onClick={() => setView('match')}
           >
-            3D Space Battle
+            Match (50 rounds)
           </button>
           <button
             className={view === 'game' ? 'active' : ''}
             onClick={() => setView('game')}
           >
-            Classic 2D
+            Single Game
           </button>
           <button
-            className={view === 'tournament-setup' ? 'active' : ''}
-            onClick={() => setView('tournament-setup')}
+            className={view === 'space-game' ? 'active' : ''}
+            onClick={() => setView('space-game')}
           >
-            Tournament
+            3D Space
           </button>
         </nav>
       </header>
 
       <main className="app-main">
         {view === 'home' && <HomeView onNavigate={setView} />}
+        {view === 'match' && <MatchView />}
         {view === 'space-game' && <SpaceGameView />}
         {view === 'game' && <GameView />}
         {view === 'tournament-setup' && (
@@ -92,22 +94,22 @@ function HomeView({ onNavigate }: { onNavigate: (view: View) => void }) {
       </div>
 
       <div className="features">
-        <div className="feature-card highlight" onClick={() => onNavigate('space-game')}>
-          <h3>3D Space Battle</h3>
-          <p>Full 3D battlefield with rotatable Three.js visualization</p>
-          <span className="feature-icon">🚀</span>
+        <div className="feature-card highlight" onClick={() => onNavigate('match')}>
+          <h3>50-Round Match</h3>
+          <p>Watch AIs battle over 50 rounds - who adapts best?</p>
+          <span className="feature-icon">🏆</span>
         </div>
 
         <div className="feature-card" onClick={() => onNavigate('game')}>
-          <h3>Classic 2D</h3>
-          <p>Traditional 10×10 Battleship gameplay</p>
+          <h3>Single Game</h3>
+          <p>Watch one game turn-by-turn</p>
           <span className="feature-icon">🎮</span>
         </div>
 
-        <div className="feature-card" onClick={() => onNavigate('tournament-setup')}>
-          <h3>Tournament</h3>
-          <p>Round-robin tournament with multiple AI types</p>
-          <span className="feature-icon">🏆</span>
+        <div className="feature-card" onClick={() => onNavigate('space-game')}>
+          <h3>3D Space Battle</h3>
+          <p>Full 3D battlefield (12×12×8)</p>
+          <span className="feature-icon">🚀</span>
         </div>
       </div>
 

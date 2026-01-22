@@ -345,6 +345,105 @@ async def space_game_websocket(websocket: WebSocket):
         pass
 
 
+@app.websocket("/ws/match")
+async def match_websocket(websocket: WebSocket):
+    """WebSocket for multi-round match between two AIs."""
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+
+            if message.get("action") == "start_match":
+                p1_type = message.get("player1_type", "hunter")
+                p2_type = message.get("player2_type", "random")
+                num_rounds = message.get("rounds", 50)
+                delay = message.get("delay", 100) / 1000.0
+
+                p1_name = f"{p1_type.title()}"
+                p2_name = f"{p2_type.title()}"
+
+                # Track overall stats
+                p1_wins = 0
+                p2_wins = 0
+                results = []
+
+                await websocket.send_json({
+                    "type": "match_start",
+                    "data": {
+                        "player1": p1_name,
+                        "player2": p2_name,
+                        "total_rounds": num_rounds
+                    }
+                })
+
+                for round_num in range(1, num_rounds + 1):
+                    # Create fresh players for each round
+                    player1 = create_player(p1_type, p1_name)
+                    player2 = create_player(p2_type, p2_name)
+
+                    # Play the full game
+                    game = BattleshipGame(player1=player1, player2=player2)
+                    winner = game.play_full_game()
+
+                    # Determine winner
+                    if winner.name == p1_name:
+                        p1_wins += 1
+                        winner_name = p1_name
+                    else:
+                        p2_wins += 1
+                        winner_name = p2_name
+
+                    # Calculate stats
+                    p1_shots = len(player1.shots_fired)
+                    p2_shots = len(player2.shots_fired)
+                    p1_hits = len(player1.hits)
+                    p2_hits = len(player2.hits)
+
+                    round_result = {
+                        "round": round_num,
+                        "winner": winner_name,
+                        "turns": game.turn_count,
+                        "p1_shots": p1_shots,
+                        "p1_hits": p1_hits,
+                        "p1_accuracy": round(p1_hits / p1_shots * 100, 1) if p1_shots > 0 else 0,
+                        "p2_shots": p2_shots,
+                        "p2_hits": p2_hits,
+                        "p2_accuracy": round(p2_hits / p2_shots * 100, 1) if p2_shots > 0 else 0,
+                    }
+                    results.append(round_result)
+
+                    # Send round result
+                    await websocket.send_json({
+                        "type": "round_end",
+                        "data": {
+                            "result": round_result,
+                            "standings": {
+                                "p1_wins": p1_wins,
+                                "p2_wins": p2_wins,
+                                "rounds_played": round_num
+                            }
+                        }
+                    })
+
+                    await asyncio.sleep(delay)
+
+                # Send final match result
+                await websocket.send_json({
+                    "type": "match_end",
+                    "data": {
+                        "winner": p1_name if p1_wins > p2_wins else p2_name if p2_wins > p1_wins else "Tie",
+                        "p1_wins": p1_wins,
+                        "p2_wins": p2_wins,
+                        "results": results
+                    }
+                })
+
+    except WebSocketDisconnect:
+        pass
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

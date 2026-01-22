@@ -1,0 +1,243 @@
+.match-view {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  height: calc(100vh - 180px);
+  min-height: 500px;
+}
+
+/* Controls */
+.match-controls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1.5rem;
+  align-items: center;
+  background: var(--bg-secondary);
+  padding: 1rem 1.5rem;
+  border-radius: 8px;
+}
+
+.player-select {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.player-select label,
+.match-settings label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+.player-select select,
+.match-settings input[type="number"] {
+  background: var(--bg-card);
+  border: 1px solid var(--text-secondary);
+  color: var(--text-primary);
+  padding: 0.4rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+}
+
+.match-settings input[type="number"] {
+  width: 70px;
+}
+
+.match-settings {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.match-settings label {
+  flex-direction: row;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.vs {
+  font-weight: bold;
+  color: var(--accent);
+}
+
+.start-button {
+  background: var(--accent);
+  border: none;
+  color: var(--bg-primary);
+  padding: 0.6rem 1.5rem;
+  border-radius: 4px;
+  font-weight: bold;
+  cursor: pointer;
+  margin-left: auto;
+  min-width: 150px;
+}
+
+.start-button:hover:not(:disabled) {
+  background: var(--accent-hover);
+}
+
+.start-button:disabled {
+  opacity: 0.8;
+}
+
+/* Scoreboard */
+.scoreboard {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 2rem;
+  padding: 1.5rem;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.player-score {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 1rem 2rem;
+  border-radius: 8px;
+  transition: all 0.3s;
+}
+
+.player-score.leading {
+  background: rgba(74, 158, 255, 0.2);
+  box-shadow: 0 0 20px rgba(74, 158, 255, 0.3);
+}
+
+.player-score .player-name {
+  font-size: 1rem;
+  color: var(--text-secondary);
+}
+
+.player-score .wins {
+  font-size: 3rem;
+  font-weight: bold;
+  color: var(--text-primary);
+  line-height: 1;
+}
+
+.player-score .win-rate {
+  font-size: 0.875rem;
+  color: var(--accent);
+}
+
+.score-divider {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.score-divider::before {
+  content: "—";
+  font-size: 2rem;
+  color: var(--text-secondary);
+}
+
+.rounds-played {
+  font-size: 0.75rem;
+  color: var(--text-secondary);
+}
+
+/* Winner Banner */
+.match-winner {
+  text-align: center;
+  font-size: 1.5rem;
+  font-weight: bold;
+  padding: 1rem;
+  background: linear-gradient(90deg, transparent, var(--bg-card), transparent);
+  animation: winner-pulse 1s ease-in-out infinite alternate;
+  border-radius: 8px;
+}
+
+@keyframes winner-pulse {
+  from { text-shadow: 0 0 10px var(--accent); }
+  to { text-shadow: 0 0 20px var(--accent), 0 0 30px gold; }
+}
+
+/* Results Table */
+.results-container {
+  flex: 1;
+  overflow: hidden;
+  background: var(--bg-secondary);
+  border-radius: 8px;
+  padding: 1rem;
+}
+
+.results-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+
+.results-table th {
+  text-align: left;
+  padding: 0.5rem;
+  color: var(--text-secondary);
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid var(--bg-card);
+  position: sticky;
+  top: 0;
+  background: var(--bg-secondary);
+}
+
+.results-table td {
+  padding: 0.4rem 0.5rem;
+  border-bottom: 1px solid var(--bg-card);
+}
+
+.results-table tbody {
+  display: block;
+  max-height: calc(100vh - 500px);
+  overflow-y: auto;
+}
+
+.results-table thead,
+.results-table tbody tr {
+  display: table;
+  width: 100%;
+  table-layout: fixed;
+}
+
+.results-table tr.p1-win {
+  background: rgba(74, 158, 255, 0.1);
+}
+
+.results-table tr.p2-win {
+  background: rgba(255, 158, 74, 0.1);
+}
+
+.winner-cell {
+  font-weight: bold;
+  color: var(--accent);
+}
+
+/* Placeholder */
+.match-placeholder {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  color: var(--text-secondary);
+  background: var(--bg-secondary);
+  border-radius: 8px;
+}
+
+.placeholder-icon {
+  font-size: 3rem;
+  margin-bottom: 1rem;
+  opacity: 0.5;
+}
+
+.match-placeholder h3 {
+  color: var(--text-primary);
+  margin-bottom: 0.5rem;
+}

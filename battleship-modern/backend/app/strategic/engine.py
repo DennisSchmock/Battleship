@@ -234,30 +234,21 @@ class StrategicGame:
         if ship and target not in ship.hits:
             ship.hits.add(target)
 
-            if self.config.fog_of_war:
-                # In fog of war, you only know you hit if you destroyed the ship
-                if ship.is_destroyed:
-                    # Reveal all ship positions
-                    for pos in ship.positions:
-                        player.known_enemy_cells[pos] = CellStatus.DESTROYED
-                    player.enemy_ships_destroyed.append(ship.name)
-                    return FireResult(target=target, hit=True, destroyed_ship=ship.name)
-                else:
-                    # You don't know you hit!
-                    return FireResult(target=target, hit=True)  # Internal hit, but player doesn't know
-            else:
-                # No fog of war
-                player.known_enemy_cells[target] = CellStatus.HIT
-                if ship.is_destroyed:
-                    for pos in ship.positions:
-                        player.known_enemy_cells[pos] = CellStatus.DESTROYED
-                    player.enemy_ships_destroyed.append(ship.name)
-                    return FireResult(target=target, hit=True, destroyed_ship=ship.name)
-                return FireResult(target=target, hit=True)
+            # You always know you HIT - you just don't know which ship (fog of war)
+            # Mark as HIT in known cells
+            player.known_enemy_cells[target] = CellStatus.HIT
 
-        # Miss
-        if not self.config.fog_of_war:
-            player.known_enemy_cells[target] = CellStatus.MISS
+            if ship.is_destroyed:
+                # Ship destroyed - reveal all ship positions as DESTROYED
+                for pos in ship.positions:
+                    player.known_enemy_cells[pos] = CellStatus.DESTROYED
+                player.enemy_ships_destroyed.append(ship.name)
+                return FireResult(target=target, hit=True, destroyed_ship=ship.name)
+
+            return FireResult(target=target, hit=True)
+
+        # Miss - you always know you missed
+        player.known_enemy_cells[target] = CellStatus.MISS
         return FireResult(target=target, hit=False)
 
     def _execute_move(self, player: PlayerState, action: MoveAction) -> MoveResult:
@@ -306,7 +297,7 @@ class StrategicGame:
         return MoveResult(ship_id=action.ship_id, success=True, new_positions=new_positions)
 
     def _execute_scan(self, player: PlayerState, enemy: PlayerState, action: ScanAction) -> ScanResult:
-        """Execute a scan action."""
+        """Execute a scan action - reveals ship positions in a 3x3x3 area."""
         center = action.center
         radius = self.config.scan_radius
         revealed = {}
@@ -318,15 +309,19 @@ class StrategicGame:
                     if not self.is_valid_position(pos):
                         continue
 
+                    # Skip cells we already know about
+                    if pos in player.known_enemy_cells:
+                        revealed[pos] = player.known_enemy_cells[pos]
+                        continue
+
                     # Check what's at this position
                     ship = enemy.get_ship_at(pos)
                     if ship and not ship.is_destroyed:
-                        if pos in ship.hits:
-                            status = CellStatus.HIT
-                        else:
-                            status = CellStatus.HIT  # We found a ship!
+                        # Found a ship! Mark as HIT (we know there's a ship here)
+                        status = CellStatus.HIT
                         player.known_enemy_cells[pos] = status
                     else:
+                        # Empty cell
                         status = CellStatus.EMPTY
                         player.known_enemy_cells[pos] = status
 

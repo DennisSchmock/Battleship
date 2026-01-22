@@ -242,7 +242,9 @@ class GameConfig:
         ("Destroyer", 2),
     ])
 
-    # Fog of war: you don't know if you hit unless you scan or destroy
+    # Fog of war: you know hit/miss, but scan reveals ship positions before firing
+    # When True: scan shows ship locations in a 3x3x3 area (recon advantage)
+    # When False: no additional benefit from scanning
     fog_of_war: bool = True
 
     @classmethod

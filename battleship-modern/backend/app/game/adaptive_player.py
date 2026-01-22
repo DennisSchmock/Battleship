@@ -111,12 +111,21 @@ class AdaptiveHunterAI(Player):
                                   orientation: Orientation) -> float:
         """Calculate total heat for a potential ship placement."""
         total_heat = 0.0
+        checkerboard_cells = 0
         dr, dc = (0, 1) if orientation == Orientation.HORIZONTAL else (1, 0)
 
         for i in range(ship.size):
             r, c = row + dr * i, col + dc * i
             if 0 <= r < len(self.enemy_shot_heatmap) and 0 <= c < len(self.enemy_shot_heatmap[0]):
+                # Add heat from enemy shot patterns
                 total_heat += self.enemy_shot_heatmap[r][c]
+                # Penalize checkerboard cells (enemy shoots there first)
+                if (r + c) % 2 == 0:
+                    checkerboard_cells += 1
+
+        # After learning, heavily penalize checkerboard placements
+        if self.rounds_played >= 3:
+            total_heat += checkerboard_cells * 5.0
 
         return total_heat
 
@@ -141,34 +150,50 @@ class AdaptiveHunterAI(Player):
             if t not in shots_received and 0 <= t[0] < size and 0 <= t[1] < size
         ]
 
-        # Hunt mode: pursue confirmed hits
+        # Hunt mode: pursue confirmed hits (highest priority)
         if self._hunt_targets:
             return self._hunt_targets.pop(0)
 
-        # Otherwise, use weighted selection based on enemy ship heatmap
+        # Build list of candidates with scores
         candidates = []
-        weights = []
-
-        # Checkerboard pattern with heat-weighted selection
         for r in range(size):
             for c in range(size):
                 if (r, c) not in shots_received:
-                    # Prefer checkerboard positions
-                    base_weight = 2.0 if (r + c) % 2 == 0 else 1.0
-                    # Add weight from learned enemy ship positions (aggressive learning)
-                    heat_weight = 1.0 + self.enemy_ship_heatmap[r][c] * self.SHIP_HEAT_WEIGHT
-                    candidates.append((r, c))
-                    weights.append(base_weight * heat_weight)
+                    # Base score from checkerboard pattern
+                    base_score = 2.0 if (r + c) % 2 == 0 else 1.0
+                    # Add learned ship position heat
+                    heat_score = self.enemy_ship_heatmap[r][c]
+                    candidates.append((r, c, base_score, heat_score))
 
-        if candidates:
-            # Weighted random selection
+        if not candidates:
+            raise RuntimeError("No available shots")
+
+        # GREEDY EXPLOITATION: After learning, prioritize high-heat cells
+        if self.rounds_played >= 5:
+            # Sort by heat score (descending), then by checkerboard
+            candidates.sort(key=lambda x: (x[3], x[2]), reverse=True)
+
+            # Pick from top 20% hottest cells (minimum 5 cells)
+            top_n = max(5, len(candidates) // 5)
+            top_candidates = candidates[:top_n]
+
+            # Among top candidates, prefer checkerboard cells
+            checkerboard_top = [c for c in top_candidates if c[2] > 1.5]
+            if checkerboard_top:
+                choice = random.choice(checkerboard_top)
+            else:
+                choice = random.choice(top_candidates)
+            return (choice[0], choice[1])
+        else:
+            # Early game: use weighted random to explore
+            weights = [c[2] * (1.0 + c[3] * self.SHIP_HEAT_WEIGHT) for c in candidates]
             total = sum(weights)
             if total > 0:
                 weights = [w / total for w in weights]
-                return random.choices(candidates, weights=weights, k=1)[0]
-            return random.choice(candidates)
-
-        raise RuntimeError("No available shots")
+                idx = random.choices(range(len(candidates)), weights=weights, k=1)[0]
+                return (candidates[idx][0], candidates[idx][1])
+            choice = random.choice(candidates)
+            return (choice[0], choice[1])
 
     def record_shot_result(self, row: int, col: int, is_hit: bool,
                           sunk_ship: Optional[Ship] = None) -> None:

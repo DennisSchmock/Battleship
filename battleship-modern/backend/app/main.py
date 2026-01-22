@@ -481,6 +481,196 @@ async def match_websocket(websocket: WebSocket):
         pass
 
 
+# === STRATEGIC SPACEBATTLESHIP v2 ===
+
+from .strategic import (
+    GameConfig, Position, Direction,
+    FireAction, MoveAction, ScanAction,
+    CellStatus
+)
+from .strategic.engine import StrategicGame, GamePhase
+from .strategic.bots import RandomBot, HunterBot, ScoutBot, EvasiveBot
+
+STRATEGIC_BOTS = {
+    "random": RandomBot,
+    "hunter": HunterBot,
+    "scout": ScoutBot,
+    "evasive": EvasiveBot,
+}
+
+
+@app.get("/api/strategic/bot-types")
+async def get_strategic_bot_types():
+    """Get available strategic bot types."""
+    return {
+        "types": [
+            {"id": "random", "name": "Random Bot", "description": "Random actions - baseline"},
+            {"id": "hunter", "name": "Hunter Bot", "description": "Checkerboard search + hunt mode"},
+            {"id": "scout", "name": "Scout Bot", "description": "Scan-heavy reconnaissance"},
+            {"id": "evasive", "name": "Evasive Bot", "description": "Moves ships to avoid destruction"},
+        ]
+    }
+
+
+@app.websocket("/ws/strategic-game")
+async def strategic_game_websocket(websocket: WebSocket):
+    """WebSocket for Strategic SpaceBattleship with Fire/Move/Scan actions."""
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+
+            if message.get("action") == "start_game":
+                p1_type = message.get("player1_type", "hunter")
+                p2_type = message.get("player2_type", "random")
+                delay = message.get("delay", 300) / 1000.0
+                use_small_grid = message.get("small_grid", False)
+
+                # Create config
+                config = GameConfig.small() if use_small_grid else GameConfig.standard()
+
+                # Create bots
+                bot1_class = STRATEGIC_BOTS.get(p1_type, HunterBot)
+                bot2_class = STRATEGIC_BOTS.get(p2_type, RandomBot)
+                bot1 = bot1_class()
+                bot2 = bot2_class()
+
+                # Initialize bots
+                bot1.on_game_start(config)
+                bot2.on_game_start(config)
+
+                # Create game
+                game = StrategicGame(config=config)
+
+                # Get ship placements
+                placements1 = bot1.place_ships(config)
+                placements2 = bot2.place_ships(config)
+
+                def convert_placements(placements, ships_config):
+                    result = []
+                    for i, (pos, direction) in enumerate(placements):
+                        ship_name, ship_size = ships_config[i]
+                        result.append((f"{ship_name.lower()}_{i}", pos, direction))
+                    return result
+
+                game.setup_player_ships(game.player1, convert_placements(placements1, config.ships))
+                game.setup_player_ships(game.player2, convert_placements(placements2, config.ships))
+                game.player1.name = bot1.get_name()
+                game.player2.name = bot2.get_name()
+                game.start_game()
+
+                # Send initial state
+                await websocket.send_json({
+                    "type": "game_start",
+                    "data": {
+                        "config": {
+                            "grid_size": config.grid_size,
+                            "actions_per_turn": config.actions_per_turn,
+                        },
+                        "player1": {
+                            "name": game.player1.name,
+                            "ships": [{"id": s.id, "name": s.name, "size": s.size,
+                                      "positions": [p.to_tuple() for p in s.positions]}
+                                     for s in game.player1.ships]
+                        },
+                        "player2": {
+                            "name": game.player2.name,
+                            "ships": [{"id": s.id, "name": s.name, "size": s.size,
+                                      "positions": [p.to_tuple() for p in s.positions]}
+                                     for s in game.player2.ships]
+                        }
+                    }
+                })
+
+                bots = [bot1, bot2]
+                max_turns = 300
+
+                # Play game turn by turn
+                while game.phase == GamePhase.PLAYING and game.turn < max_turns:
+                    current_bot = bots[game.current_player_idx]
+                    current_player = game.current_player
+                    opponent = game.opponent
+
+                    # Get game state for current player
+                    state = game.get_game_state(current_player)
+
+                    # Get actions from bot
+                    actions = current_bot.get_actions(state)
+
+                    # Execute actions
+                    result = game.execute_turn(actions)
+
+                    # Notify bot of results
+                    current_bot.on_turn_result(result)
+
+                    # Send turn update
+                    await websocket.send_json({
+                        "type": "turn",
+                        "data": {
+                            "turn": game.turn,
+                            "player": current_player.name,
+                            "actions": [a.to_dict() for a in actions],
+                            "results": {
+                                "fires": [{"target": r.target.to_tuple(), "hit": r.hit,
+                                          "destroyed": r.destroyed_ship} for r in result.fire_results],
+                                "moves": [{"ship": r.ship_id, "success": r.success,
+                                          "new_positions": [p.to_tuple() for p in r.new_positions] if r.new_positions else None}
+                                         for r in result.move_results],
+                                "scans": [{"center": r.center.to_tuple(),
+                                          "revealed": {str(p.to_tuple()): s.value for p, s in r.revealed.items()}}
+                                         for r in result.scan_results]
+                            },
+                            "state": {
+                                "player1": {
+                                    "ships": [{"id": s.id, "name": s.name, "health": s.health,
+                                              "positions": [p.to_tuple() for p in s.positions],
+                                              "is_destroyed": s.is_destroyed}
+                                             for s in game.player1.ships]
+                                },
+                                "player2": {
+                                    "ships": [{"id": s.id, "name": s.name, "health": s.health,
+                                              "positions": [p.to_tuple() for p in s.positions],
+                                              "is_destroyed": s.is_destroyed}
+                                             for s in game.player2.ships]
+                                }
+                            }
+                        }
+                    })
+
+                    # End turn
+                    game.end_turn()
+
+                    await asyncio.sleep(delay)
+
+                # Determine winner
+                if game.winner:
+                    winner = game.winner
+                elif game.player1.all_ships_destroyed():
+                    winner = game.player2.name
+                elif game.player2.all_ships_destroyed():
+                    winner = game.player1.name
+                else:
+                    p1_ships = sum(1 for s in game.player1.ships if not s.is_destroyed)
+                    p2_ships = sum(1 for s in game.player2.ships if not s.is_destroyed)
+                    winner = game.player1.name if p1_ships > p2_ships else game.player2.name if p2_ships > p1_ships else "Draw"
+
+                # Send final state
+                await websocket.send_json({
+                    "type": "game_end",
+                    "data": {
+                        "winner": winner,
+                        "turns": game.turn,
+                        "player1_ships_remaining": sum(1 for s in game.player1.ships if not s.is_destroyed),
+                        "player2_ships_remaining": sum(1 for s in game.player2.ships if not s.is_destroyed)
+                    }
+                })
+
+    except WebSocketDisconnect:
+        pass
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

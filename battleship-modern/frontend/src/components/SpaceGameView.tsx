@@ -3,7 +3,6 @@ import { SpaceBoard } from './SpaceBoard';
 import './SpaceBoard.css';
 import './SpaceGameView.css';
 
-const API_URL = 'http://localhost:8000';
 const WS_URL = 'ws://localhost:8000';
 
 interface GameEvent {

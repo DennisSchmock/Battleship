@@ -1,0 +1,404 @@
+.strategic-game-view {
+  padding: 1rem;
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+.game-controls {
+  background: rgba(30, 41, 59, 0.8);
+  border-radius: 12px;
+  padding: 1rem 1.5rem;
+  margin-bottom: 1rem;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.player-select {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.player-select label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+.player-select select {
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: 1px solid #334155;
+  background: #1e293b;
+  color: #e2e8f0;
+  font-size: 0.9rem;
+  min-width: 140px;
+}
+
+.vs {
+  font-weight: bold;
+  color: #3b82f6;
+  font-size: 1.1rem;
+}
+
+.start-button {
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  border: none;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+}
+
+.start-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.4);
+}
+
+.start-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.options-row {
+  display: flex;
+  align-items: center;
+  gap: 1.5rem;
+}
+
+.grid-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  color: #94a3b8;
+  cursor: pointer;
+}
+
+.grid-toggle input {
+  width: 16px;
+  height: 16px;
+}
+
+.speed-control {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.speed-control label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+}
+
+.speed-control input[type="range"] {
+  width: 100px;
+}
+
+.connection-status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.85rem;
+  color: #94a3b8;
+  margin-left: auto;
+}
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ef4444;
+}
+
+.status-dot.connected {
+  background: #22c55e;
+}
+
+/* Game Arena */
+.strategic-arena {
+  background: rgba(30, 41, 59, 0.6);
+  border-radius: 12px;
+  padding: 1.5rem;
+}
+
+.winner-banner {
+  text-align: center;
+  padding: 1rem;
+  background: linear-gradient(135deg, #f59e0b, #eab308);
+  border-radius: 8px;
+  margin-bottom: 1rem;
+  font-size: 1.5rem;
+  font-weight: bold;
+  color: #1e293b;
+}
+
+.final-stats {
+  font-size: 0.9rem;
+  font-weight: normal;
+  margin-top: 0.5rem;
+}
+
+.game-info {
+  display: flex;
+  justify-content: center;
+  gap: 2rem;
+  margin-bottom: 1rem;
+  padding: 0.5rem;
+  background: rgba(15, 23, 42, 0.5);
+  border-radius: 8px;
+}
+
+.turn-display {
+  font-size: 1.2rem;
+  font-weight: bold;
+  color: #3b82f6;
+}
+
+.grid-info {
+  color: #94a3b8;
+}
+
+/* Players Status */
+.players-status {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  gap: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.player-card {
+  background: rgba(15, 23, 42, 0.7);
+  border-radius: 10px;
+  padding: 1rem;
+}
+
+.player-card.p1 {
+  border-left: 3px solid #3b82f6;
+}
+
+.player-card.p2 {
+  border-left: 3px solid #ef4444;
+}
+
+.player-card h3 {
+  margin: 0 0 0.75rem 0;
+  font-size: 1.1rem;
+  color: #e2e8f0;
+}
+
+.ships-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.ship-status {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.3rem 0.5rem;
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+.ship-status.destroyed {
+  opacity: 0.5;
+  text-decoration: line-through;
+}
+
+.ship-name {
+  color: #cbd5e1;
+}
+
+.ship-health {
+  color: #94a3b8;
+}
+
+.ships-alive {
+  margin-top: 0.75rem;
+  padding-top: 0.5rem;
+  border-top: 1px solid #334155;
+  font-size: 0.9rem;
+  color: #22c55e;
+  font-weight: 500;
+}
+
+.vs-center {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+}
+
+.vs-icon {
+  font-size: 2rem;
+}
+
+.action-legend {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  font-size: 0.8rem;
+  color: #94a3b8;
+}
+
+/* Action Log */
+.action-log {
+  background: rgba(15, 23, 42, 0.7);
+  border-radius: 10px;
+  padding: 1rem;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.action-log h4 {
+  margin: 0 0 0.75rem 0;
+  color: #94a3b8;
+  font-size: 0.9rem;
+}
+
+.log-entries {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.turn-entry {
+  display: flex;
+  gap: 0.75rem;
+  padding: 0.5rem;
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 6px;
+  font-size: 0.85rem;
+}
+
+.turn-header {
+  display: flex;
+  flex-direction: column;
+  min-width: 80px;
+}
+
+.turn-num {
+  font-weight: bold;
+  color: #3b82f6;
+}
+
+.turn-player {
+  color: #94a3b8;
+  font-size: 0.75rem;
+}
+
+.turn-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.action-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.2rem 0.5rem;
+  border-radius: 4px;
+  font-size: 0.8rem;
+  background: rgba(51, 65, 85, 0.5);
+  color: #cbd5e1;
+}
+
+.action-badge.hit {
+  background: rgba(239, 68, 68, 0.3);
+  color: #fca5a5;
+}
+
+.action-badge.miss {
+  background: rgba(100, 116, 139, 0.3);
+  color: #94a3b8;
+}
+
+.action-badge.success {
+  background: rgba(34, 197, 94, 0.3);
+  color: #86efac;
+}
+
+.action-badge.fail {
+  background: rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+
+.action-badge.scan {
+  background: rgba(59, 130, 246, 0.3);
+  color: #93c5fd;
+}
+
+/* Placeholder */
+.game-placeholder {
+  background: rgba(30, 41, 59, 0.6);
+  border-radius: 12px;
+  padding: 4rem 2rem;
+  text-align: center;
+}
+
+.placeholder-content {
+  max-width: 400px;
+  margin: 0 auto;
+}
+
+.placeholder-icon {
+  font-size: 4rem;
+  display: block;
+  margin-bottom: 1rem;
+}
+
+.placeholder-content h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+  color: #e2e8f0;
+}
+
+.placeholder-content p {
+  color: #94a3b8;
+  margin: 0.25rem 0;
+}
+
+.rules-summary {
+  margin-top: 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  text-align: left;
+  background: rgba(15, 23, 42, 0.5);
+  padding: 1rem;
+  border-radius: 8px;
+}
+
+.rules-summary div {
+  color: #cbd5e1;
+  font-size: 0.9rem;
+}
+
+/* Scrollbar */
+.action-log::-webkit-scrollbar {
+  width: 6px;
+}
+
+.action-log::-webkit-scrollbar-track {
+  background: rgba(30, 41, 59, 0.5);
+  border-radius: 3px;
+}
+
+.action-log::-webkit-scrollbar-thumb {
+  background: #475569;
+  border-radius: 3px;
+}

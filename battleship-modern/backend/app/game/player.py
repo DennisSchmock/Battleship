@@ -94,6 +94,7 @@ class HunterAIPlayer(AIPlayer):
     """
     Smarter AI that hunts ships after getting a hit.
     Similar to the original Java implementation's strategy.
+    Has a placement bias towards edges (learnable pattern).
     """
 
     def __init__(self, name: str):
@@ -108,6 +109,37 @@ class HunterAIPlayer(AIPlayer):
         self._hunt_mode = False
         self._hunt_targets = []
         self._last_hit = None
+
+    def place_ships(self, ships: List[Ship]) -> None:
+        """Place ships with bias toward edges (a learnable pattern)."""
+        for ship in ships:
+            placed = False
+            attempts = 0
+            max_attempts = 1000
+
+            while not placed and attempts < max_attempts:
+                # Bias: 70% chance to prefer edge placement
+                if random.random() < 0.7:
+                    # Pick edge-biased position
+                    if random.random() < 0.5:
+                        # Top or bottom rows
+                        row = random.choice([0, 1, self.board.size - 2, self.board.size - 1])
+                        col = random.randint(0, self.board.size - 1)
+                    else:
+                        # Left or right columns
+                        row = random.randint(0, self.board.size - 1)
+                        col = random.choice([0, 1, self.board.size - 2, self.board.size - 1])
+                else:
+                    # Random position
+                    row = random.randint(0, self.board.size - 1)
+                    col = random.randint(0, self.board.size - 1)
+
+                orientation = random.choice([Orientation.HORIZONTAL, Orientation.VERTICAL])
+                placed = self.board.place_ship(ship, row, col, orientation)
+                attempts += 1
+
+            if not placed:
+                raise RuntimeError(f"Could not place ship: {ship.name}")
 
     def record_shot_result(self, row: int, col: int, is_hit: bool, sunk_ship: Optional[Ship] = None) -> None:
         """Record shot result and update hunting state."""

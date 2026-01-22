@@ -32,9 +32,10 @@ class AdaptiveHunterAI(Player):
     _hunt_targets: List[Tuple[int, int]] = field(default_factory=list)
     _confirmed_hits: List[Tuple[int, int]] = field(default_factory=list)
 
-    # Learning parameters
+    # Learning parameters - tuned for visible impact
     HEAT_INCREASE: float = 1.0
-    HEAT_DECAY: float = 0.95  # Decay old data slightly each round
+    HEAT_DECAY: float = 0.98  # Less decay = longer memory
+    SHIP_HEAT_WEIGHT: float = 2.0  # How much to weight ship positions when shooting
 
     def __post_init__(self):
         """Initialize heat maps."""
@@ -87,7 +88,7 @@ class AdaptiveHunterAI(Player):
             best_score = float('inf')
 
             # Try many random placements and pick the "coldest" one
-            for _ in range(100):
+            for _ in range(200):
                 row = random.randint(0, self.board.size - 1)
                 col = random.randint(0, self.board.size - 1)
                 orientation = random.choice([Orientation.HORIZONTAL, Orientation.VERTICAL])
@@ -154,8 +155,8 @@ class AdaptiveHunterAI(Player):
                 if (r, c) not in shots_received:
                     # Prefer checkerboard positions
                     base_weight = 2.0 if (r + c) % 2 == 0 else 1.0
-                    # Add weight from learned enemy ship positions
-                    heat_weight = 1.0 + self.enemy_ship_heatmap[r][c] * 0.5
+                    # Add weight from learned enemy ship positions (aggressive learning)
+                    heat_weight = 1.0 + self.enemy_ship_heatmap[r][c] * self.SHIP_HEAT_WEIGHT
                     candidates.append((r, c))
                     weights.append(base_weight * heat_weight)
 

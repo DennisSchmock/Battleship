@@ -673,6 +673,259 @@ async def strategic_game_websocket(websocket: WebSocket):
         pass
 
 
+# === FLEET COMMANDER ===
+
+from .fleet_commander import (
+    FleetCommanderGame, GamePhase as FCGamePhase, GameConfig as FCGameConfig,
+    Position as FCPosition, Direction as FCDirection, ShipType,
+    MoveAction as FCMoveAction, FireAction as FCFireAction,
+    ScanAction as FCScanAction, AbilityAction, AbilityType
+)
+from .fleet_commander.bot_interface import create_game_view
+from .fleet_commander.bots import TacticalBot
+from .fleet_commander.replay import GameRecorder, ReplayStorage, ReplayPlayer
+
+# Replay storage
+replay_storage = ReplayStorage("replays")
+
+FLEET_BOTS = {
+    "tactical": TacticalBot,
+}
+
+
+@app.get("/api/fleet-commander/bot-types")
+async def get_fleet_bot_types():
+    """Get available Fleet Commander bot types."""
+    return {
+        "types": [
+            {"id": "tactical", "name": "Tactical Bot", "description": "Uses all ship abilities strategically"},
+        ]
+    }
+
+
+@app.get("/api/fleet-commander/replays")
+async def list_replays():
+    """List available game replays."""
+    return {"replays": replay_storage.list_replays()}
+
+
+@app.get("/api/fleet-commander/replays/{replay_id}")
+async def get_replay(replay_id: str):
+    """Get a specific replay."""
+    replay = replay_storage.load(replay_id)
+    if not replay:
+        raise HTTPException(status_code=404, detail="Replay not found")
+    return replay.to_dict()
+
+
+@app.websocket("/ws/fleet-commander")
+async def fleet_commander_websocket(websocket: WebSocket):
+    """WebSocket for Fleet Commander game."""
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+
+            if message.get("action") == "start_game":
+                p1_type = message.get("player1_type", "tactical")
+                p2_type = message.get("player2_type", "tactical")
+                delay = message.get("delay", 500) / 1000.0
+                use_small = message.get("small_grid", True)
+
+                # Create config
+                config = FCGameConfig.small() if use_small else FCGameConfig()
+
+                # Create bots
+                bot1_class = FLEET_BOTS.get(p1_type, TacticalBot)
+                bot2_class = FLEET_BOTS.get(p2_type, TacticalBot)
+                bot1 = bot1_class()
+                bot2 = bot2_class()
+                bot1.on_game_start(config)
+                bot2.on_game_start(config)
+
+                # Create game
+                game = FleetCommanderGame(config=config)
+
+                # Auto-place fleets
+                game.auto_place_fleet(0)
+                game.auto_place_fleet(1)
+                game.players[0].name = bot1.get_name()
+                game.players[1].name = bot2.get_name()
+                game.start_game()
+
+                # Create recorder for replay
+                recorder = GameRecorder(config, game.players[0].name, game.players[1].name)
+                recorder.record_initial_state(
+                    [s.to_dict() for s in game.players[0].ships],
+                    [s.to_dict() for s in game.players[1].ships]
+                )
+
+                # Send initial state
+                await websocket.send_json({
+                    "type": "game_start",
+                    "data": {
+                        "replay_id": recorder.replay.replay_id,
+                        "config": {
+                            "grid_size": config.grid_size,
+                            "action_points_per_turn": config.action_points_per_turn,
+                            "storm_start_turn": config.storm_start_turn,
+                        },
+                        "player1": {
+                            "name": game.players[0].name,
+                            "ships": [s.to_dict() for s in game.players[0].ships]
+                        },
+                        "player2": {
+                            "name": game.players[1].name,
+                            "ships": [s.to_dict() for s in game.players[1].ships]
+                        },
+                        "storm": {
+                            "min": game.storm.current_bounds[0].to_tuple() if game.storm else None,
+                            "max": game.storm.current_bounds[1].to_tuple() if game.storm else None,
+                        }
+                    }
+                })
+
+                bots = [bot1, bot2]
+                max_turns = config.max_turns
+
+                # Game loop
+                while game.phase == FCGamePhase.PLAYING and game.turn < max_turns:
+                    current_bot = bots[game.current_player_idx]
+                    player = game.current_player
+
+                    # Get view for bot
+                    state_dict = game.get_visible_state(game.current_player_idx)
+                    view = create_game_view(state_dict)
+
+                    # Get actions from bot
+                    actions = current_bot.get_actions(view)
+
+                    # Record actions
+                    recorder.record_actions(game.turn, game.current_player_idx, actions)
+
+                    # Execute turn
+                    result = game.execute_turn(actions)
+
+                    # Record result
+                    full_state = {
+                        "player1_ships": [s.to_dict() for s in game.players[0].ships],
+                        "player2_ships": [s.to_dict() for s in game.players[1].ships],
+                        "storm_bounds": (
+                            game.storm.current_bounds[0].to_tuple(),
+                            game.storm.current_bounds[1].to_tuple()
+                        ) if game.storm else None
+                    }
+                    recorder.record_turn_result(result, full_state)
+
+                    # Notify bot
+                    current_bot.on_turn_result(result)
+
+                    # Send turn update
+                    await websocket.send_json({
+                        "type": "turn",
+                        "data": {
+                            "turn": game.turn,
+                            "player": player.name,
+                            "player_id": player.player_id,
+                            "actions": [
+                                {
+                                    "success": ar.success,
+                                    "type": ar.action.to_dict()["type"],
+                                    "data": ar.action.to_dict(),
+                                    "damage": ar.damage_dealt,
+                                    "ships_hit": ar.ships_hit,
+                                    "ships_destroyed": ar.ships_destroyed,
+                                }
+                                for ar in result.actions_taken
+                            ],
+                            "storm_damage": result.storm_damage_taken,
+                            "storm_shrunk": result.storm_shrunk,
+                            "state": {
+                                "player1": {
+                                    "ships": [s.to_dict() for s in game.players[0].ships],
+                                    "action_points": game.players[0].action_points
+                                },
+                                "player2": {
+                                    "ships": [s.to_dict() for s in game.players[1].ships],
+                                    "action_points": game.players[1].action_points
+                                },
+                                "storm": {
+                                    "min": game.storm.current_bounds[0].to_tuple() if game.storm else None,
+                                    "max": game.storm.current_bounds[1].to_tuple() if game.storm else None,
+                                    "turns_until_shrink": game.storm.turns_until_shrink if game.storm else 0
+                                }
+                            }
+                        }
+                    })
+
+                    await asyncio.sleep(delay)
+
+                # Game ended
+                winner_id = game.winner if game.winner is not None else -1
+                winner_name = game.players[winner_id].name if winner_id >= 0 else "Draw"
+
+                # Record game end
+                recorder.record_game_end(winner_id, {
+                    "player1_ships": [s.to_dict() for s in game.players[0].ships],
+                    "player2_ships": [s.to_dict() for s in game.players[1].ships],
+                })
+
+                # Save replay
+                replay_id = replay_storage.save(recorder.get_replay())
+
+                # Send end message
+                await websocket.send_json({
+                    "type": "game_end",
+                    "data": {
+                        "winner": winner_name,
+                        "winner_id": winner_id,
+                        "turns": game.turn,
+                        "player1_ships_remaining": sum(1 for s in game.players[0].ships if not s.is_destroyed),
+                        "player2_ships_remaining": sum(1 for s in game.players[1].ships if not s.is_destroyed),
+                        "replay_id": replay_id
+                    }
+                })
+
+            elif message.get("action") == "load_replay":
+                replay_id = message.get("replay_id")
+                replay = replay_storage.load(replay_id)
+
+                if not replay:
+                    await websocket.send_json({
+                        "type": "error",
+                        "message": "Replay not found"
+                    })
+                    continue
+
+                player = ReplayPlayer(replay)
+
+                # Send initial state
+                initial = player.get_initial_state()
+                await websocket.send_json({
+                    "type": "replay_start",
+                    "data": {
+                        "replay_id": replay.replay_id,
+                        "total_turns": player.total_turns,
+                        "player1_name": replay.player1_name,
+                        "player2_name": replay.player2_name,
+                        "winner": replay.winner,
+                        "config": initial["config"],
+                        "ships_p1": initial["ships_p1"],
+                        "ships_p2": initial["ships_p2"]
+                    }
+                })
+
+            elif message.get("action") == "replay_step":
+                # This would be handled by maintaining player state
+                # For now, client can request specific turns
+                pass
+
+    except WebSocketDisconnect:
+        pass
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)

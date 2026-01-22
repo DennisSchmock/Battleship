@@ -6,9 +6,10 @@ import { GameView } from './components/GameView'
 import { SpaceGameView } from './components/SpaceGameView'
 import { MatchView } from './components/MatchView'
 import { StrategicGameView } from './components/StrategicGameView'
+import { FleetCommander3DView } from './components/FleetCommander3DView'
 import './App.css'
 
-type View = 'home' | 'tournament-setup' | 'tournament' | 'game' | 'space-game' | 'match' | 'strategic'
+type View = 'home' | 'tournament-setup' | 'tournament' | 'game' | 'space-game' | 'match' | 'strategic' | 'fleet-commander'
 
 function App() {
   const [view, setView] = useState<View>('home')
@@ -56,6 +57,12 @@ function App() {
           >
             Strategic v2
           </button>
+          <button
+            className={view === 'fleet-commander' ? 'active' : ''}
+            onClick={() => setView('fleet-commander')}
+          >
+            Fleet Commander
+          </button>
         </nav>
       </header>
 
@@ -64,6 +71,7 @@ function App() {
         {view === 'match' && <MatchView />}
         {view === 'space-game' && <SpaceGameView />}
         {view === 'strategic' && <StrategicGameView />}
+        {view === 'fleet-commander' && <FleetCommander3DView />}
         {view === 'game' && <GameView />}
         {view === 'tournament-setup' && (
           <TournamentSetup onStart={handleStartTournament} />
@@ -124,6 +132,12 @@ function HomeView({ onNavigate }: { onNavigate: (view: View) => void }) {
           <h3>Strategic v2</h3>
           <p>Fire, Move, Scan - ships can dodge!</p>
           <span className="feature-icon">🎮</span>
+        </div>
+
+        <div className="feature-card highlight" onClick={() => onNavigate('fleet-commander')}>
+          <h3>Fleet Commander</h3>
+          <p>24×24×12 space, 7 ship types, abilities, storm!</p>
+          <span className="feature-icon">⚔️</span>
         </div>
       </div>
 

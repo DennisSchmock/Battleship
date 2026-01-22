@@ -112,10 +112,16 @@ class HunterAI3D(Player3D):
         shots_received = set(tuple(s) for s in opponent_state.get("shots_received", []))
         size = opponent_state["size"]
 
-        # Filter out already-shot positions from hunt targets
+        def is_valid(pos: Tuple[int, int, int]) -> bool:
+            x, y, z = pos
+            return (0 <= x < size["x"] and
+                    0 <= y < size["y"] and
+                    0 <= z < size["z"])
+
+        # Filter out already-shot and invalid positions from hunt targets
         self.hunt_targets = [
             t for t in self.hunt_targets
-            if t not in shots_received and t not in self.shots_fired
+            if is_valid(t) and t not in shots_received and t not in self.shots_fired
         ]
 
         # Target mode: if we have hunting targets, pursue them

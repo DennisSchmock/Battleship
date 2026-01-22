@@ -74,6 +74,7 @@ const BOT_TYPES = [
   { id: 'hunter', name: 'Hunter Bot', description: 'Checkerboard + hunt' },
   { id: 'scout', name: 'Scout Bot', description: 'Scan-heavy recon' },
   { id: 'evasive', name: 'Evasive Bot', description: 'Moves to avoid hits' },
+  { id: 'predictor', name: 'Predictor Bot', description: 'Predicts + learns patterns' },
 ];
 
 export function StrategicGameView() {

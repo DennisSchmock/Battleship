@@ -489,13 +489,14 @@ from .strategic import (
     CellStatus
 )
 from .strategic.engine import StrategicGame, GamePhase
-from .strategic.bots import RandomBot, HunterBot, ScoutBot, EvasiveBot
+from .strategic.bots import RandomBot, HunterBot, ScoutBot, EvasiveBot, PredictorBot
 
 STRATEGIC_BOTS = {
     "random": RandomBot,
     "hunter": HunterBot,
     "scout": ScoutBot,
     "evasive": EvasiveBot,
+    "predictor": PredictorBot,
 }
 
 
@@ -508,6 +509,7 @@ async def get_strategic_bot_types():
             {"id": "hunter", "name": "Hunter Bot", "description": "Checkerboard search + hunt mode"},
             {"id": "scout", "name": "Scout Bot", "description": "Scan-heavy reconnaissance"},
             {"id": "evasive", "name": "Evasive Bot", "description": "Moves ships to avoid destruction"},
+            {"id": "predictor", "name": "Predictor Bot", "description": "Predicts movements + learns patterns"},
         ]
     }
 

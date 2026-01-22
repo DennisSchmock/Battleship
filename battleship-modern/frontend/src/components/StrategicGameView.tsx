@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
+import { Strategic3DBoard } from './Strategic3DBoard';
 import './StrategicGameView.css';
 
 const WS_URL = 'ws://localhost:8000';
@@ -271,6 +272,18 @@ export function StrategicGameView() {
           <div className="game-info">
             <div className="turn-display">Turn {currentTurn}</div>
             <div className="grid-info">{gridSize[0]}×{gridSize[1]}×{gridSize[2]} grid ({totalCells} cells)</div>
+          </div>
+
+          {/* 3D Battlefield Visualization */}
+          <div className="battlefield-3d">
+            <Strategic3DBoard
+              gridSize={gridSize as [number, number, number]}
+              player1Ships={player1.ships}
+              player2Ships={player2.ships}
+              player1Name={player1.name}
+              player2Name={player2.name}
+              currentTurn={turnHistory.length > 0 ? turnHistory[turnHistory.length - 1] : null}
+            />
           </div>
 
           <div className="players-status">

@@ -7,6 +7,7 @@ import random
 
 from ..game.game import BattleshipGame, GameState
 from ..game.player import Player, AIPlayer, HunterAIPlayer
+from ..game.adaptive_player import AdaptiveHunterAI
 from ..ml.rl_player import RLPlayer
 
 
@@ -76,6 +77,7 @@ class PlayerStats:
 AI_PLAYER_REGISTRY: Dict[str, Type[Player]] = {
     "random": AIPlayer,
     "hunter": HunterAIPlayer,
+    "adaptive": AdaptiveHunterAI,
     "rl": RLPlayer,
 }
 

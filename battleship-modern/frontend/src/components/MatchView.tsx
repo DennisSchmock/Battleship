@@ -22,12 +22,13 @@ interface Standings {
 const AI_TYPES = [
   { id: 'random', name: 'Random AI' },
   { id: 'hunter', name: 'Hunter AI' },
+  { id: 'adaptive', name: 'Adaptive Hunter' },
   { id: 'rl', name: 'RL Agent' },
 ]
 
 export function MatchView() {
-  const [player1Type, setPlayer1Type] = useState('hunter')
-  const [player2Type, setPlayer2Type] = useState('random')
+  const [player1Type, setPlayer1Type] = useState('adaptive')
+  const [player2Type, setPlayer2Type] = useState('hunter')
   const [numRounds, setNumRounds] = useState(50)
   const [delay, setDelay] = useState(50)
   const [isRunning, setIsRunning] = useState(false)

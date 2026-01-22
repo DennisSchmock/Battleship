@@ -1,7 +1,7 @@
 """FastAPI application for Battleship tournament."""
 import asyncio
 from contextlib import asynccontextmanager
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import json
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
@@ -17,7 +17,7 @@ from .api.tournament import (
 )
 from .game.game import BattleshipGame
 from .game.game3d import SpaceBattleshipGame
-from .game.player import AIPlayer, HunterAIPlayer
+from .game.player import Player, AIPlayer, HunterAIPlayer
 from .game.player3d import RandomPlayer3D, HunterAI3D, SmartHunter3D
 from .game.ship3d import Ship3D
 
@@ -85,6 +85,7 @@ async def get_player_types():
         "types": [
             {"id": "random", "name": "Random AI", "description": "Shoots randomly"},
             {"id": "hunter", "name": "Hunter AI", "description": "Hunts ships after hitting"},
+            {"id": "adaptive", "name": "Adaptive Hunter", "description": "Learns opponent patterns across rounds"},
             {"id": "rl", "name": "RL Agent", "description": "Reinforcement Learning trained AI"},
         ]
     }
@@ -345,6 +346,14 @@ async def space_game_websocket(websocket: WebSocket):
         pass
 
 
+def get_ship_positions(player: Player) -> List[Tuple[int, int]]:
+    """Extract all ship positions from a player's board."""
+    positions = []
+    for ship in player.board.ships:
+        positions.extend(ship.get_coordinates())
+    return positions
+
+
 @app.websocket("/ws/match")
 async def match_websocket(websocket: WebSocket):
     """WebSocket for multi-round match between two AIs."""
@@ -364,6 +373,10 @@ async def match_websocket(websocket: WebSocket):
                 p1_name = f"{p1_type.title()}"
                 p2_name = f"{p2_type.title()}"
 
+                # Create players ONCE - they persist across rounds for learning
+                player1 = create_player(p1_type, p1_name)
+                player2 = create_player(p2_type, p2_name)
+
                 # Track overall stats
                 p1_wins = 0
                 p2_wins = 0
@@ -379,27 +392,51 @@ async def match_websocket(websocket: WebSocket):
                 })
 
                 for round_num in range(1, num_rounds + 1):
-                    # Create fresh players for each round
-                    player1 = create_player(p1_type, p1_name)
-                    player2 = create_player(p2_type, p2_name)
+                    # Signal start of new round for adaptive players
+                    if hasattr(player1, 'start_new_round'):
+                        player1.start_new_round()
+                    if hasattr(player2, 'start_new_round'):
+                        player2.start_new_round()
 
-                    # Play the full game
+                    # Play the full game (setup() will call reset() and place_ships())
                     game = BattleshipGame(player1=player1, player2=player2)
                     winner = game.play_full_game()
+
+                    # Calculate stats BEFORE recording round result (which might happen before next reset)
+                    p1_shots = len(player1.shots_fired)
+                    p2_shots = len(player2.shots_fired)
+                    p1_hits = len(player1.hits)
+                    p2_hits = len(player2.hits)
+
+                    # Get ship positions for learning
+                    p1_ship_positions = get_ship_positions(player1)
+                    p2_ship_positions = get_ship_positions(player2)
 
                     # Determine winner
                     if winner.name == p1_name:
                         p1_wins += 1
                         winner_name = p1_name
+                        p1_won, p2_won = True, False
                     else:
                         p2_wins += 1
                         winner_name = p2_name
+                        p1_won, p2_won = False, True
 
-                    # Calculate stats
-                    p1_shots = len(player1.shots_fired)
-                    p2_shots = len(player2.shots_fired)
-                    p1_hits = len(player1.hits)
-                    p2_hits = len(player2.hits)
+                    # Record round results for learning
+                    # Player1 learns from player2's behavior
+                    if hasattr(player1, 'record_round_result'):
+                        player1.record_round_result(
+                            won=p1_won,
+                            enemy_shots=list(player2.shots_fired),
+                            enemy_ship_positions=p2_ship_positions
+                        )
+                    # Player2 learns from player1's behavior
+                    if hasattr(player2, 'record_round_result'):
+                        player2.record_round_result(
+                            won=p2_won,
+                            enemy_shots=list(player1.shots_fired),
+                            enemy_ship_positions=p1_ship_positions
+                        )
 
                     round_result = {
                         "round": round_num,

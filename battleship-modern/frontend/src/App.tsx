@@ -131,8 +131,8 @@ function HomeView({ onNavigate }: { onNavigate: (view: View) => void }) {
             </div>
           </div>
           <div className="ai-card highlight">
-            <h4>Smart Hunter</h4>
-            <p>Directional tracking with line continuation.</p>
+            <h4>Adaptive Hunter</h4>
+            <p>Learns enemy patterns with heat maps. Adapts across rounds!</p>
             <div className="ai-stats">
               <span>Difficulty: Hard</span>
             </div>

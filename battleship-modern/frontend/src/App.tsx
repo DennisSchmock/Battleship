@@ -3,9 +3,10 @@ import { GameBoard } from './components/GameBoard'
 import { TournamentSetup } from './components/TournamentSetup'
 import { TournamentView } from './components/TournamentView'
 import { GameView } from './components/GameView'
+import { SpaceGameView } from './components/SpaceGameView'
 import './App.css'
 
-type View = 'home' | 'tournament-setup' | 'tournament' | 'game'
+type View = 'home' | 'tournament-setup' | 'tournament' | 'game' | 'space-game'
 
 function App() {
   const [view, setView] = useState<View>('home')
@@ -20,7 +21,7 @@ function App() {
     <div className="app">
       <header className="app-header">
         <h1 onClick={() => setView('home')} style={{ cursor: 'pointer' }}>
-          Battleship AI Tournament
+          SpaceBattleship AI Tournament
         </h1>
         <nav>
           <button
@@ -30,22 +31,29 @@ function App() {
             Home
           </button>
           <button
+            className={view === 'space-game' ? 'active' : ''}
+            onClick={() => setView('space-game')}
+          >
+            3D Space Battle
+          </button>
+          <button
             className={view === 'game' ? 'active' : ''}
             onClick={() => setView('game')}
           >
-            Watch Game
+            Classic 2D
           </button>
           <button
             className={view === 'tournament-setup' ? 'active' : ''}
             onClick={() => setView('tournament-setup')}
           >
-            New Tournament
+            Tournament
           </button>
         </nav>
       </header>
 
       <main className="app-main">
         {view === 'home' && <HomeView onNavigate={setView} />}
+        {view === 'space-game' && <SpaceGameView />}
         {view === 'game' && <GameView />}
         {view === 'tournament-setup' && (
           <TournamentSetup onStart={handleStartTournament} />
@@ -67,10 +75,10 @@ function HomeView({ onNavigate }: { onNavigate: (view: View) => void }) {
     <div className="home-view">
       <div className="hero">
         <div className="hero-content">
-          <h2>AI vs AI Combat</h2>
+          <h2>3D Space Combat</h2>
           <p>
-            Watch intelligent agents battle it out in classic Battleship.
-            Featuring reinforcement learning AI that learns to hunt and destroy.
+            Battle in a 12×12×8 three-dimensional grid with 1,152 cells.
+            Watch AI agents navigate 3D space to hunt and destroy enemy fleets.
           </p>
         </div>
         <div className="hero-visual">
@@ -84,45 +92,45 @@ function HomeView({ onNavigate }: { onNavigate: (view: View) => void }) {
       </div>
 
       <div className="features">
+        <div className="feature-card highlight" onClick={() => onNavigate('space-game')}>
+          <h3>3D Space Battle</h3>
+          <p>Full 3D battlefield with rotatable Three.js visualization</p>
+          <span className="feature-icon">🚀</span>
+        </div>
+
         <div className="feature-card" onClick={() => onNavigate('game')}>
-          <h3>Quick Game</h3>
-          <p>Watch a single game between two AI players in real-time</p>
+          <h3>Classic 2D</h3>
+          <p>Traditional 10×10 Battleship gameplay</p>
           <span className="feature-icon">🎮</span>
         </div>
 
         <div className="feature-card" onClick={() => onNavigate('tournament-setup')}>
           <h3>Tournament</h3>
-          <p>Set up a round-robin tournament with multiple AI types</p>
+          <p>Round-robin tournament with multiple AI types</p>
           <span className="feature-icon">🏆</span>
-        </div>
-
-        <div className="feature-card">
-          <h3>Train AI</h3>
-          <p>Train your own RL agent using deep Q-learning</p>
-          <span className="feature-icon">🧠</span>
         </div>
       </div>
 
       <div className="ai-types">
-        <h3>Available AI Players</h3>
+        <h3>Space Fleet AI Players</h3>
         <div className="ai-grid">
           <div className="ai-card">
             <h4>Random AI</h4>
-            <p>Shoots randomly. Simple baseline.</p>
+            <p>Shoots randomly in 3D space. Baseline opponent.</p>
             <div className="ai-stats">
               <span>Difficulty: Easy</span>
             </div>
           </div>
           <div className="ai-card">
             <h4>Hunter AI</h4>
-            <p>Hunts ships systematically after a hit.</p>
+            <p>3D checkerboard pattern + 6-directional hunting.</p>
             <div className="ai-stats">
               <span>Difficulty: Medium</span>
             </div>
           </div>
           <div className="ai-card highlight">
-            <h4>RL Agent</h4>
-            <p>Deep Q-Network trained through self-play.</p>
+            <h4>Smart Hunter</h4>
+            <p>Directional tracking with line continuation.</p>
             <div className="ai-stats">
               <span>Difficulty: Hard</span>
             </div>

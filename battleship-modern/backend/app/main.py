@@ -16,7 +16,10 @@ from .api.tournament import (
     AI_PLAYER_REGISTRY,
 )
 from .game.game import BattleshipGame
+from .game.game3d import SpaceBattleshipGame
 from .game.player import AIPlayer, HunterAIPlayer
+from .game.player3d import RandomPlayer3D, HunterAI3D, SmartHunter3D
+from .game.ship3d import Ship3D
 
 
 # Store active tournaments and connections
@@ -261,6 +264,73 @@ async def game_websocket(websocket: WebSocket):
 
                     # Small delay for visualization
                     await asyncio.sleep(0.3)
+
+                # Send final state
+                await websocket.send_json({
+                    "type": "game_end",
+                    "data": {
+                        "winner": game.winner.name if game.winner else None,
+                        "replay": game.get_full_replay()
+                    }
+                })
+
+    except WebSocketDisconnect:
+        pass
+
+
+def create_3d_player(player_type: str, name: str):
+    """Factory function to create 3D AI players."""
+    if player_type == "random3d":
+        return RandomPlayer3D(name=name)
+    elif player_type == "hunter3d":
+        return HunterAI3D(name=name)
+    elif player_type == "smart3d":
+        return SmartHunter3D(name=name)
+    else:
+        return RandomPlayer3D(name=name)
+
+
+@app.websocket("/ws/space-game")
+async def space_game_websocket(websocket: WebSocket):
+    """WebSocket for watching a 3D SpaceBattleship game in real-time."""
+    await websocket.accept()
+
+    try:
+        while True:
+            data = await websocket.receive_text()
+            message = json.loads(data)
+
+            if message.get("action") == "start_game":
+                p1_type = message.get("player1_type", "smart3d")
+                p2_type = message.get("player2_type", "random3d")
+                delay = message.get("delay", 300) / 1000.0  # Convert ms to seconds
+
+                player1 = create_3d_player(p1_type, f"Player 1 ({p1_type})")
+                player2 = create_3d_player(p2_type, f"Player 2 ({p2_type})")
+
+                game = SpaceBattleshipGame(player1=player1, player2=player2)
+                game.setup()
+
+                # Send initial state
+                await websocket.send_json({
+                    "type": "game_start",
+                    "data": game.get_game_state()
+                })
+
+                # Play game turn by turn
+                while game.state.value == "playing":
+                    event = game.play_turn()
+
+                    await websocket.send_json({
+                        "type": "turn",
+                        "data": {
+                            "event": event.to_dict(),
+                            "state": game.get_game_state()
+                        }
+                    })
+
+                    # Delay for visualization
+                    await asyncio.sleep(delay)
 
                 # Send final state
                 await websocket.send_json({

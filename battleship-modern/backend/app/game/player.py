@@ -41,10 +41,14 @@ class Player(ABC):
 
     def to_dict(self) -> dict:
         """Convert player to dictionary."""
+        total_shots = len(self.shots_fired)
+        total_hits = len(self.hits)
+        accuracy = round((total_hits / total_shots * 100), 1) if total_shots > 0 else 0
         return {
             "name": self.name,
-            "shots_fired": self.shots_fired,
-            "hits": self.hits,
+            "shots_fired": total_shots,
+            "hits": total_hits,
+            "accuracy": accuracy,
             "ships_remaining": len(self.board.remaining_ships),
         }
 

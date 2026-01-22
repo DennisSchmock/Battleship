@@ -855,6 +855,30 @@ function BattleScene({
 // MAIN COMPONENT
 // ============================================================================
 
+interface BotType {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface ActionInfo {
+  type: string;
+  ship_id: string;
+  ship_type: string;
+  success: boolean;
+  damage?: number;
+  ships_hit?: string[];
+  ships_destroyed?: string[];
+  target?: Position;
+}
+
+const DEFAULT_BOTS: BotType[] = [
+  { id: 'tactical', name: 'Tactical Bot', description: 'Uses all ship abilities strategically' },
+  { id: 'aggressive', name: 'Aggressive Bot', description: 'Focuses on maximum firepower' },
+  { id: 'defensive', name: 'Defensive Bot', description: 'Prioritizes survival and repairs' },
+  { id: 'random', name: 'Random Bot', description: 'Baseline - random actions' },
+];
+
 export function FleetCommander3DView() {
   const [wsConnected, setWsConnected] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
@@ -870,14 +894,32 @@ export function FleetCommander3DView() {
   const [replayTurn, setReplayTurn] = useState(0);
   const [mode, setMode] = useState<'live' | 'replay'>('live');
 
+  // Bot selection
+  const [botTypes, setBotTypes] = useState<BotType[]>(DEFAULT_BOTS);
+  const [player1Bot, setPlayer1Bot] = useState('tactical');
+  const [player2Bot, setPlayer2Bot] = useState('aggressive');
+
+  // Current turn actions
+  const [currentActions, setCurrentActions] = useState<ActionInfo[]>([]);
+  const [actionPoints, setActionPoints] = useState({ p1: 0, p2: 0 });
+
   const wsRef = useRef<WebSocket | null>(null);
 
-  // Fetch available replays
+  // Fetch available replays and bot types
   useEffect(() => {
     fetch('/api/fleet-commander/replays')
       .then(res => res.json())
       .then(data => setReplays(data.replays || []))
       .catch(err => console.error('Failed to fetch replays:', err));
+
+    fetch('/api/fleet-commander/bot-types')
+      .then(res => res.json())
+      .then(data => {
+        if (data.types && data.types.length > 0) {
+          setBotTypes(data.types);
+        }
+      })
+      .catch(err => console.error('Failed to fetch bot types:', err));
   }, []);
 
   // Connect to WebSocket for live game
@@ -896,8 +938,14 @@ export function FleetCommander3DView() {
     ws.onopen = () => {
       setWsConnected(true);
       addLog('Connected to Fleet Commander');
-      // Send start game message
-      ws.send(JSON.stringify({ action: 'start_game', small_grid: true, delay: 400 }));
+      // Send start game message with bot selections
+      ws.send(JSON.stringify({
+        action: 'start_game',
+        player1_type: player1Bot,
+        player2_type: player2Bot,
+        small_grid: true,
+        delay: 400
+      }));
     };
 
     ws.onmessage = (event) => {
@@ -997,11 +1045,39 @@ export function FleetCommander3DView() {
             current_player: d.player_id,
           });
 
-          // Log important events
-          if (fireResults.length > 0) {
-            const hits = fireResults.filter(f => f.hit).length;
-            addLog(`Turn ${d.turn}: ${d.player} - ${hits}/${fireResults.length} hits`);
-          }
+          // Update action points
+          setActionPoints({
+            p1: d.state.player1.action_points || 0,
+            p2: d.state.player2.action_points || 0,
+          });
+
+          // Extract detailed actions
+          const actionsInfo: ActionInfo[] = d.actions.map((a: any) => ({
+            type: a.type,
+            ship_id: a.data?.ship_id || 'unknown',
+            ship_type: a.data?.ship_type || '',
+            success: a.success ?? true,
+            damage: a.damage || 0,
+            ships_hit: a.ships_hit || [],
+            ships_destroyed: a.ships_destroyed || [],
+            target: a.data?.target ? { x: a.data.target[0], y: a.data.target[1], z: a.data.target[2] } : undefined,
+          }));
+          setCurrentActions(actionsInfo);
+
+          // Log turn summary
+          const moveCount = actionsInfo.filter((a: ActionInfo) => a.type === 'move').length;
+          const fireCount = actionsInfo.filter((a: ActionInfo) => a.type === 'fire').length;
+          const scanCount = actionsInfo.filter((a: ActionInfo) => a.type === 'scan').length;
+          const abilityCount = actionsInfo.filter((a: ActionInfo) => a.type === 'ability').length;
+          const hits = fireResults.filter(f => f.hit).length;
+
+          let logMsg = `T${d.turn} ${d.player}:`;
+          if (moveCount > 0) logMsg += ` ${moveCount} moves`;
+          if (fireCount > 0) logMsg += ` ${fireCount} fires (${hits} hits)`;
+          if (scanCount > 0) logMsg += ` ${scanCount} scans`;
+          if (abilityCount > 0) logMsg += ` ${abilityCount} abilities`;
+          addLog(logMsg);
+
           if (turnData.ships_destroyed.length > 0) {
             addLog(`DESTROYED: ${turnData.ships_destroyed.join(', ')}`);
           }
@@ -1034,7 +1110,7 @@ export function FleetCommander3DView() {
       console.error('WebSocket error:', error);
       addLog('Connection error');
     };
-  }, []);
+  }, [player1Bot, player2Bot]);
 
   // Load and play replay
   const loadReplay = useCallback(async (replayId: string) => {
@@ -1186,6 +1262,35 @@ export function FleetCommander3DView() {
       <div className="control-panel">
         <h2>Fleet Commander</h2>
 
+        {/* Bot Selection */}
+        <div className="bot-selection">
+          <div className="bot-selector">
+            <label>Player 1</label>
+            <select
+              value={player1Bot}
+              onChange={(e) => setPlayer1Bot(e.target.value)}
+              disabled={isPlaying}
+            >
+              {botTypes.map(bot => (
+                <option key={bot.id} value={bot.id}>{bot.name}</option>
+              ))}
+            </select>
+          </div>
+          <div className="vs-label">VS</div>
+          <div className="bot-selector">
+            <label>Player 2</label>
+            <select
+              value={player2Bot}
+              onChange={(e) => setPlayer2Bot(e.target.value)}
+              disabled={isPlaying}
+            >
+              {botTypes.map(bot => (
+                <option key={bot.id} value={bot.id}>{bot.name}</option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div className="mode-buttons">
           <button
             onClick={connectToGame}
@@ -1195,6 +1300,25 @@ export function FleetCommander3DView() {
             {isPlaying ? 'Game Running...' : 'Start New Game'}
           </button>
         </div>
+
+        {/* Current Actions Display */}
+        {isPlaying && currentActions.length > 0 && (
+          <div className="actions-panel">
+            <h3>Turn {gameState?.turn || 0} Actions</h3>
+            <div className="actions-list">
+              {currentActions.map((action, i) => (
+                <div key={i} className={`action-item ${action.type} ${action.ships_hit && action.ships_hit.length > 0 ? 'hit' : ''}`}>
+                  <span className="action-type">{action.type.toUpperCase()}</span>
+                  <span className="action-ship">{action.ship_id.split('_')[0]}</span>
+                  {action.damage > 0 && <span className="action-damage">-{action.damage} HP</span>}
+                  {action.ships_destroyed && action.ships_destroyed.length > 0 && (
+                    <span className="action-destroyed">DESTROYED!</span>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <div className="replay-section">
           <h3>Replays</h3>
@@ -1354,6 +1478,128 @@ export function FleetCommander3DView() {
         .mode-buttons button.active {
           background: linear-gradient(135deg, #2a5a8c, #1a4060);
           box-shadow: 0 0 20px rgba(68, 136, 255, 0.5);
+        }
+
+        .bot-selection {
+          display: flex;
+          align-items: center;
+          gap: 10px;
+          padding: 10px;
+          background: rgba(0, 10, 20, 0.5);
+          border-radius: 5px;
+        }
+
+        .bot-selector {
+          flex: 1;
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+        }
+
+        .bot-selector label {
+          font-size: 10px;
+          color: #668899;
+          text-transform: uppercase;
+        }
+
+        .bot-selector select {
+          padding: 8px;
+          background: rgba(20, 40, 60, 0.8);
+          border: 1px solid #345;
+          color: #aaccee;
+          border-radius: 4px;
+          cursor: pointer;
+          font-size: 12px;
+        }
+
+        .bot-selector select:disabled {
+          opacity: 0.5;
+          cursor: not-allowed;
+        }
+
+        .vs-label {
+          color: #4488ff;
+          font-weight: bold;
+          font-size: 12px;
+          padding-top: 16px;
+        }
+
+        .actions-panel {
+          background: rgba(0, 10, 20, 0.5);
+          border-radius: 5px;
+          padding: 10px;
+          max-height: 150px;
+          overflow: hidden;
+        }
+
+        .actions-list {
+          display: flex;
+          flex-direction: column;
+          gap: 4px;
+          max-height: 120px;
+          overflow-y: auto;
+        }
+
+        .action-item {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          padding: 4px 8px;
+          background: rgba(20, 40, 60, 0.6);
+          border-radius: 3px;
+          font-size: 11px;
+          border-left: 3px solid #456;
+        }
+
+        .action-item.fire {
+          border-left-color: #ff6644;
+        }
+
+        .action-item.fire.hit {
+          border-left-color: #ff4400;
+          background: rgba(255, 68, 0, 0.15);
+        }
+
+        .action-item.move {
+          border-left-color: #44ff88;
+        }
+
+        .action-item.scan {
+          border-left-color: #44aaff;
+        }
+
+        .action-item.ability {
+          border-left-color: #aa44ff;
+        }
+
+        .action-type {
+          font-weight: bold;
+          color: #aaccee;
+          min-width: 50px;
+        }
+
+        .action-ship {
+          color: #88aacc;
+          flex: 1;
+        }
+
+        .action-damage {
+          color: #ff6644;
+          font-weight: bold;
+        }
+
+        .action-destroyed {
+          color: #ff4400;
+          font-weight: bold;
+          background: rgba(255, 0, 0, 0.2);
+          padding: 2px 6px;
+          border-radius: 3px;
+          animation: pulse 0.5s ease-in-out infinite alternate;
+        }
+
+        @keyframes pulse {
+          from { opacity: 0.7; }
+          to { opacity: 1; }
         }
 
         .replay-section {

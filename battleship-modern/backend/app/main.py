@@ -682,7 +682,7 @@ from .fleet_commander import (
     ScanAction as FCScanAction, AbilityAction, AbilityType
 )
 from .fleet_commander.bot_interface import create_game_view
-from .fleet_commander.bots import TacticalBot
+from .fleet_commander.bots import TacticalBot, AggressiveBot, DefensiveBot, RandomBot
 from .fleet_commander.replay import GameRecorder, ReplayStorage, ReplayPlayer
 
 # Replay storage
@@ -690,6 +690,9 @@ replay_storage = ReplayStorage("replays")
 
 FLEET_BOTS = {
     "tactical": TacticalBot,
+    "aggressive": AggressiveBot,
+    "defensive": DefensiveBot,
+    "random": RandomBot,
 }
 
 
@@ -699,6 +702,9 @@ async def get_fleet_bot_types():
     return {
         "types": [
             {"id": "tactical", "name": "Tactical Bot", "description": "Uses all ship abilities strategically"},
+            {"id": "aggressive", "name": "Aggressive Bot", "description": "Focuses on maximum firepower and pushing forward"},
+            {"id": "defensive", "name": "Defensive Bot", "description": "Prioritizes survival, shields and repairs"},
+            {"id": "random", "name": "Random Bot", "description": "Baseline - takes random actions"},
         ]
     }
 

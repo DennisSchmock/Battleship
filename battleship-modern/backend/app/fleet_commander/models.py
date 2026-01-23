@@ -525,12 +525,14 @@ class PlayerState:
     action_points: int = 0
 
     @property
+    def ships_alive(self) -> int:
+        """Count of all ships still alive."""
+        return sum(1 for s in self.ships if not s.is_destroyed)
+
+    @property
     def combat_ships_alive(self) -> int:
-        """Count of non-support ships still alive."""
-        combat_types = {ShipType.SCOUT, ShipType.DESTROYER, ShipType.CRUISER,
-                       ShipType.ARTILLERY, ShipType.MINELAYER}
-        return sum(1 for s in self.ships
-                   if not s.is_destroyed and s.config.ship_type in combat_types)
+        """Count of all ships still alive (legacy name for compatibility)."""
+        return self.ships_alive
 
 
 # =============================================================================

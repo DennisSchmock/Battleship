@@ -358,11 +358,6 @@ class FleetCommanderGame:
         # Move ship
         old_positions = ship.positions.copy()
 
-        # Remove from occupied
-        for pos in old_positions:
-            if self._occupied_cells.get(pos) == ship.id:
-                del self._occupied_cells[pos]
-
         # Calculate new positions (shift in direction)
         move_vector = Position(*direction.value)
         steps = len(path)
@@ -370,6 +365,22 @@ class FleetCommanderGame:
                                   p.y + move_vector.y * steps,
                                   p.z + move_vector.z * steps)
                         for p in ship.positions]
+
+        # Validate ALL new positions are within bounds
+        for pos in new_positions:
+            if not self._is_valid_position(pos):
+                return ActionResult(False, action, "Move would place ship outside grid")
+
+        # Check for collisions with other entities at new positions
+        for pos in new_positions:
+            entity = self._get_entity_at(pos)
+            if entity and entity != ship.id:
+                return ActionResult(False, action, f"Collision at {pos.to_tuple()}")
+
+        # Remove from occupied
+        for pos in old_positions:
+            if self._occupied_cells.get(pos) == ship.id:
+                del self._occupied_cells[pos]
 
         ship.positions = new_positions
         ship.movement_remaining -= len(path)

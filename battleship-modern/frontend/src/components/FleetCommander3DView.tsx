@@ -202,20 +202,31 @@ function AnimatedShip({
           >
             <boxGeometry args={[0.8, 0.8, 0.8]} />
             <meshStandardMaterial
-              color={isEnemy && !hovered ? '#666666' : shipColor}
-              emissive={emissive}
-              emissiveIntensity={hovered ? 0.8 : 0.3}
-              transparent={isEnemy}
-              opacity={isEnemy ? 0.5 : 0.95}
+              color={shipColor}
+              emissive={isEnemy ? '#ff2200' : emissive}
+              emissiveIntensity={hovered ? 0.8 : isEnemy ? 0.4 : 0.3}
+              transparent
+              opacity={isEnemy ? 0.75 : 0.95}
               metalness={0.6}
               roughness={0.3}
             />
           </mesh>
 
+          {/* Enemy indicator ring */}
+          {isEnemy && (
+            <mesh
+              position={[pos.x + offset[0], pos.z + offset[2], pos.y + offset[1]]}
+              rotation={[Math.PI / 2, 0, 0]}
+            >
+              <ringGeometry args={[0.5, 0.6, 16]} />
+              <meshBasicMaterial color="#ff4444" transparent opacity={0.6} side={2} />
+            </mesh>
+          )}
+
           {/* Engine glow */}
           <pointLight
             position={[pos.x + offset[0], pos.z + offset[2] - 0.3, pos.y + offset[1]]}
-            color={shipColor}
+            color={isEnemy ? '#ff4400' : shipColor}
             intensity={hovered ? 1 : 0.3}
             distance={2}
           />
@@ -247,22 +258,22 @@ function AnimatedShip({
         />
       )}
 
-      {/* Ship info label on hover */}
-      {hovered && (
+      {/* Ship info label - always visible for enemies, hover for own */}
+      {(hovered || isEnemy) && (
         <Text
           position={[
             shipCenter.x + offset[0],
-            shipCenter.z + offset[2] + 1.5,
+            shipCenter.z + offset[2] + 1.2,
             shipCenter.y + offset[1]
           ]}
-          fontSize={0.4}
-          color={shipColor}
+          fontSize={isEnemy ? 0.3 : 0.4}
+          color={isEnemy ? '#ff6666' : shipColor}
           anchorX="center"
           anchorY="middle"
           outlineWidth={0.05}
           outlineColor="#000000"
         >
-          {ship.type.toUpperCase()} ({ship.hp}/{ship.max_hp})
+          {ship.type.toUpperCase()} {hovered ? `(${ship.hp}/${ship.max_hp})` : ''}
         </Text>
       )}
     </group>

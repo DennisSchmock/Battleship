@@ -17,8 +17,7 @@ Protocol:
        "type": "game_start",
        "config": {
            "grid_size": [32, 32, 16],
-           "fleet_ships": ["scout", "destroyer", ...],
-           "action_points_per_turn": 10,
+           "fleet_ships": ["destroyer", "cruiser", ...],
            ...
        }
    }
@@ -35,8 +34,7 @@ Protocol:
        "type": "get_actions",
        "view": {
            "turn": 5,
-           "action_points": 10,
-           "my_ships": [...],
+           "my_ships": [...],  // Each ship has has_acted flag
            "visible_enemy_ships": [...],
            "known_cells": {...},
            "storm": {...},
@@ -73,7 +71,7 @@ Protocol:
    {
        "type": "fleet_placement",
        "placements": [
-           {"ship_type": "scout", "position": [5, 10, 3], "direction": "north"},
+           {"ship_type": "destroyer", "position": [5, 10, 3], "direction": "north"},
            ...
        ]
    }
@@ -84,11 +82,12 @@ Protocol:
        "actions": [
            {"action_type": "move", "ship_id": "ship_1", "path": [[5, 11, 3]]},
            {"action_type": "fire", "ship_id": "ship_2", "target": [15, 10, 5]},
-           {"action_type": "scan", "ship_id": "ship_3", "center": [20, 15, 8]},
            {"action_type": "ability", "ship_id": "ship_4", "ability": "deploy_mine", "target": [6, 10, 3]},
            ...
        ]
    }
+
+Note: Each ship gets 1 action per turn. Ships that have already acted (has_acted=true) cannot act again until the next turn.
 """
 import json
 import asyncio
@@ -149,7 +148,6 @@ def serialize_config(config: GameConfig) -> Dict[str, Any]:
         "grid_size": list(config.grid_size),
         "player1_zone": list(config.player1_zone),
         "player2_zone": list(config.player2_zone),
-        "action_points_per_turn": config.action_points_per_turn,
         "fleet_ships": [s.value for s in config.fleet_config.ships],
         "fog_of_war": config.fog_of_war,
         "memory_decay_turns": config.memory_decay_turns,
@@ -323,7 +321,6 @@ class WebSocketBotAdapter(FleetBot):
         view_dict = {
             "turn": view.turn,
             "my_player_id": view.my_player_id,
-            "action_points": view.action_points,
             "grid_size": list(view.grid_size),
             "my_ships": [
                 {
@@ -334,6 +331,8 @@ class WebSocketBotAdapter(FleetBot):
                     "max_hp": s.max_hp,
                     "speed": s.speed,
                     "movement_remaining": s.movement_remaining,
+                    "has_acted": s.has_acted,
+                    "can_act": s.can_act(),
                     "can_fire": s.can_fire(),
                     "can_scan": s.can_scan(),
                     "can_move": s.can_move(),

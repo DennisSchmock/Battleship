@@ -775,7 +775,6 @@ async def fleet_commander_websocket(websocket: WebSocket):
                         "replay_id": recorder.replay.replay_id,
                         "config": {
                             "grid_size": config.grid_size,
-                            "action_points_per_turn": config.action_points_per_turn,
                             "storm_start_turn": config.storm_start_turn,
                         },
                         "player1": {
@@ -850,12 +849,10 @@ async def fleet_commander_websocket(websocket: WebSocket):
                             "storm_shrunk": result.storm_shrunk,
                             "state": {
                                 "player1": {
-                                    "ships": [s.to_dict() for s in game.players[0].ships],
-                                    "action_points": game.players[0].action_points
+                                    "ships": [s.to_dict() for s in game.players[0].ships]
                                 },
                                 "player2": {
-                                    "ships": [s.to_dict() for s in game.players[1].ships],
-                                    "action_points": game.players[1].action_points
+                                    "ships": [s.to_dict() for s in game.players[1].ships]
                                 },
                                 "storm": {
                                     "min": game.storm.current_bounds[0].to_tuple() if game.storm else None,

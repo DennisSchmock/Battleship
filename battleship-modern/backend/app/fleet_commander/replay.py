@@ -100,7 +100,6 @@ class GameRecorder:
             created_at=datetime.now().isoformat(),
             config={
                 "grid_size": config.grid_size,
-                "action_points_per_turn": config.action_points_per_turn,
                 "storm_start_turn": config.storm_start_turn,
                 "storm_shrink_interval": config.storm_shrink_interval,
                 "max_turns": config.max_turns,

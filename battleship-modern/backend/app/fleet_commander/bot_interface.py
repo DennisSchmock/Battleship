@@ -15,6 +15,19 @@ from .models import (
 
 
 @dataclass
+class AbilityInfo:
+    """Information about a ship ability."""
+    ability_type: AbilityType
+    can_use: bool  # Can use this turn (not on cooldown, has uses remaining)
+    cooldown_remaining: int  # Turns until available
+    range: int  # Range in cells
+    damage: int  # Damage dealt (negative for healing)
+    area_size: int  # Radius for area effects (0 = single target)
+    uses_per_turn: int  # How many times can use per turn
+    blocks_movement: bool  # Can't move if using this
+
+
+@dataclass
 class VisibleShip:
     """A ship visible to the bot (either own or detected enemy)."""
     id: str
@@ -26,7 +39,72 @@ class VisibleShip:
     max_hp: Optional[int] = None
     speed: Optional[int] = None
     movement_remaining: Optional[int] = None
-    abilities: Optional[Dict[AbilityType, bool]] = None  # ability -> can_use
+    abilities: Optional[Dict[AbilityType, bool]] = None  # ability -> can_use (legacy)
+    ability_info: Optional[Dict[AbilityType, AbilityInfo]] = None  # Full ability details
+
+    def can_fire(self) -> bool:
+        """Check if this ship can fire this turn."""
+        if not self.ability_info:
+            return False
+        for ab_type in [AbilityType.FIRE, AbilityType.BURST_FIRE, AbilityType.AREA_BOMBARDMENT,
+                        AbilityType.PRECISION_STRIKE, AbilityType.PIERCING_SHOT]:
+            if ab_type in self.ability_info and self.ability_info[ab_type].can_use:
+                return True
+        return False
+
+    def can_scan(self) -> bool:
+        """Check if this ship can scan this turn."""
+        if not self.ability_info:
+            return False
+        for ab_type in [AbilityType.SCAN, AbilityType.LONG_RANGE_SCAN, AbilityType.ANTI_STEALTH_SCAN]:
+            if ab_type in self.ability_info and self.ability_info[ab_type].can_use:
+                return True
+        return False
+
+    def can_move(self) -> bool:
+        """Check if this ship can move this turn."""
+        return self.movement_remaining is not None and self.movement_remaining > 0
+
+    def get_fire_range(self) -> int:
+        """Get the maximum fire range of this ship."""
+        if not self.ability_info:
+            return 0
+        max_range = 0
+        for ab_type in [AbilityType.FIRE, AbilityType.BURST_FIRE, AbilityType.AREA_BOMBARDMENT,
+                        AbilityType.PRECISION_STRIKE, AbilityType.PIERCING_SHOT]:
+            if ab_type in self.ability_info:
+                max_range = max(max_range, self.ability_info[ab_type].range)
+        return max_range
+
+    def get_scan_range(self) -> int:
+        """Get the maximum scan range of this ship."""
+        if not self.ability_info:
+            return 0
+        max_range = 0
+        for ab_type in [AbilityType.SCAN, AbilityType.LONG_RANGE_SCAN, AbilityType.ANTI_STEALTH_SCAN]:
+            if ab_type in self.ability_info:
+                max_range = max(max_range, self.ability_info[ab_type].range)
+        return max_range
+
+    def get_best_fire_ability(self) -> Optional[AbilityType]:
+        """Get the best available fire ability (highest damage that can be used)."""
+        if not self.ability_info:
+            return None
+        best = None
+        best_damage = 0
+        for ab_type in [AbilityType.FIRE, AbilityType.BURST_FIRE, AbilityType.AREA_BOMBARDMENT,
+                        AbilityType.PRECISION_STRIKE, AbilityType.PIERCING_SHOT]:
+            if ab_type in self.ability_info:
+                info = self.ability_info[ab_type]
+                if info.can_use and info.damage > best_damage:
+                    best_damage = info.damage
+                    best = ab_type
+        return best
+
+    @property
+    def center(self) -> Position:
+        """Get center position of ship."""
+        return self.positions[len(self.positions) // 2]
 
 
 @dataclass
@@ -93,6 +171,44 @@ class GameView:
             if ship.id == ship_id:
                 return ship
         return None
+
+    def get_ships_that_can_fire(self) -> List[VisibleShip]:
+        """Get all my ships that can fire this turn."""
+        return [s for s in self.my_ships if s.hp and s.hp > 0 and s.can_fire()]
+
+    def get_ships_that_can_scan(self) -> List[VisibleShip]:
+        """Get all my ships that can scan this turn."""
+        return [s for s in self.my_ships if s.hp and s.hp > 0 and s.can_scan()]
+
+    def get_ships_that_can_move(self) -> List[VisibleShip]:
+        """Get all my ships that can move this turn."""
+        return [s for s in self.my_ships if s.hp and s.hp > 0 and s.can_move()]
+
+    def get_ships_by_type(self, ship_type: ShipType) -> List[VisibleShip]:
+        """Get all my ships of a specific type."""
+        return [s for s in self.my_ships if s.ship_type == ship_type and s.hp and s.hp > 0]
+
+    def get_alive_ships(self) -> List[VisibleShip]:
+        """Get all my ships that are still alive."""
+        return [s for s in self.my_ships if s.hp and s.hp > 0]
+
+    def get_damaged_ships(self) -> List[VisibleShip]:
+        """Get all my ships that are damaged but alive."""
+        return [s for s in self.my_ships if s.hp and s.max_hp and 0 < s.hp < s.max_hp]
+
+    def get_enemies_in_range_of(self, ship: VisibleShip) -> List[VisibleShip]:
+        """Get all visible enemies within firing range of a ship."""
+        fire_range = ship.get_fire_range()
+        if fire_range == 0:
+            return []
+        return [e for e in self.visible_enemy_ships
+                if any(ship.center.distance_to(p) <= fire_range for p in e.positions)]
+
+    def get_action_cost(self, ship: VisibleShip) -> int:
+        """Get the action point cost to command a ship."""
+        if ship.ship_type:
+            return SHIP_CONFIGS[ship.ship_type].action_cost
+        return 1
 
 
 class FleetBot(ABC):
@@ -274,10 +390,35 @@ def create_game_view(state_dict: dict) -> GameView:
     my_ships = []
     for s in state_dict["my_ships"]:
         abilities = {}
-        for ab_name, ab_info in s.get("abilities", {}).items():
+        ability_info = {}
+
+        # Get ship config for ability details
+        ship_type = ShipType(s["type"])
+        ship_config = SHIP_CONFIGS[ship_type]
+
+        for ab_name, ab_state in s.get("abilities", {}).items():
             try:
                 ab_type = AbilityType(ab_name)
-                abilities[ab_type] = ab_info["can_use"]
+                abilities[ab_type] = ab_state["can_use"]
+
+                # Find the ability config for full details
+                ab_config = None
+                for cfg in ship_config.abilities:
+                    if cfg.ability_type == ab_type:
+                        ab_config = cfg
+                        break
+
+                if ab_config:
+                    ability_info[ab_type] = AbilityInfo(
+                        ability_type=ab_type,
+                        can_use=ab_state["can_use"],
+                        cooldown_remaining=ab_state.get("cooldown", 0),
+                        range=ab_config.range,
+                        damage=ab_config.damage,
+                        area_size=ab_config.area_size,
+                        uses_per_turn=ab_config.uses_per_turn,
+                        blocks_movement=ab_config.blocks_movement,
+                    )
             except ValueError:
                 pass
 
@@ -285,12 +426,13 @@ def create_game_view(state_dict: dict) -> GameView:
             id=s["id"],
             positions=[Position.from_tuple(p) for p in s["positions"]],
             is_own=True,
-            ship_type=ShipType(s["type"]),
+            ship_type=ship_type,
             hp=s["hp"],
             max_hp=s["max_hp"],
             speed=s["speed"],
             movement_remaining=s["movement_remaining"],
-            abilities=abilities
+            abilities=abilities,
+            ability_info=ability_info
         ))
 
     # Parse visible enemy ships

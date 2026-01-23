@@ -466,9 +466,9 @@ class GameConfig:
     storm_shrink_rate: int = 1  # 1 cell at a time
     storm_damage: int = 1
 
-    # Fog of war
-    fog_of_war: bool = True
-    memory_decay_turns: int = 15  # Scanned info expires after X turns
+    # Fog of war - disabled for tactical chess-like gameplay
+    fog_of_war: bool = False
+    memory_decay_turns: int = 0  # Not used when fog_of_war is False
 
     # Victory conditions
     max_turns: int = 500  # Allow long games

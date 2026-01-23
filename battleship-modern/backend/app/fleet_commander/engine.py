@@ -820,23 +820,34 @@ class FleetCommanderGame:
         # Own ships (full info)
         own_ships = [ship.to_dict() for ship in player.ships]
 
-        # Enemy ships (only if in known cells with SHIP status)
+        # Enemy ships - all visible if fog of war disabled, otherwise only detected ones
         visible_enemy_ships = []
         for ship in opponent.ships:
             if ship.is_destroyed:
                 continue
-            visible = False
-            for pos in ship.positions:
-                cell = player.known_cells.get(pos)
-                if cell and cell.status == CellStatus.SHIP:
-                    visible = True
-                    break
-            if visible:
+
+            # Without fog of war, all ships are visible
+            if not self.config.fog_of_war:
                 visible_enemy_ships.append({
                     "id": ship.id,
                     "positions": [p.to_tuple() for p in ship.positions],
-                    # Don't reveal full info
+                    "ship_type": ship.config.ship_type.value,
+                    "hp": ship.hp,
+                    "max_hp": ship.config.max_hp,
                 })
+            else:
+                # With fog of war, only show detected ships
+                visible = False
+                for pos in ship.positions:
+                    cell = player.known_cells.get(pos)
+                    if cell and cell.status == CellStatus.SHIP:
+                        visible = True
+                        break
+                if visible:
+                    visible_enemy_ships.append({
+                        "id": ship.id,
+                        "positions": [p.to_tuple() for p in ship.positions],
+                    })
 
         # Storm bounds
         storm_info = None

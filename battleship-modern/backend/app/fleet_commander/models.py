@@ -448,48 +448,53 @@ class FleetConfig:
 class GameConfig:
     """Configuration for a Fleet Commander game."""
     # Grid size
-    grid_size: Tuple[int, int, int] = (24, 24, 12)  # 6912 cells
+    grid_size: Tuple[int, int, int] = (32, 32, 16)  # Large 3D battlefield
 
     # Starting zones (x ranges for each player)
-    player1_zone: Tuple[int, int] = (0, 5)  # x = 0-5
-    player2_zone: Tuple[int, int] = (18, 23)  # x = 18-23
+    player1_zone: Tuple[int, int] = (0, 7)  # x = 0-7
+    player2_zone: Tuple[int, int] = (24, 31)  # x = 24-31
 
     # Fleet configuration
     fleet_config: FleetConfig = field(default_factory=FleetConfig)
 
     # Action points per turn
-    action_points_per_turn: int = 8
+    action_points_per_turn: int = 10
 
-    # Storm configuration
-    storm_start_turn: int = 20  # When storm starts
-    storm_shrink_interval: int = 8
-    storm_shrink_rate: int = 1
+    # Storm configuration - slow nudging, not stressful
+    storm_start_turn: int = 50  # Storm doesn't start until turn 50
+    storm_shrink_interval: int = 15  # Shrinks every 15 turns
+    storm_shrink_rate: int = 1  # 1 cell at a time
     storm_damage: int = 1
 
     # Fog of war
     fog_of_war: bool = True
-    memory_decay_turns: int = 10  # Scanned info expires after X turns
+    memory_decay_turns: int = 15  # Scanned info expires after X turns
 
     # Victory conditions
-    max_turns: int = 200
+    max_turns: int = 500  # Allow long games
 
     @classmethod
     def small(cls) -> 'GameConfig':
-        """Smaller config for testing."""
+        """Medium config - still with all ship types."""
         return cls(
-            grid_size=(16, 16, 8),
-            player1_zone=(0, 3),
-            player2_zone=(12, 15),
+            grid_size=(24, 24, 12),
+            player1_zone=(0, 5),
+            player2_zone=(18, 23),
             fleet_config=FleetConfig(ships=[
+                ShipType.SCOUT,
                 ShipType.SCOUT,
                 ShipType.DESTROYER,
                 ShipType.CRUISER,
+                ShipType.SUPPORT,
+                ShipType.CARRIER,
+                ShipType.ARTILLERY,
                 ShipType.MINELAYER,
             ]),
-            action_points_per_turn=6,
-            storm_start_turn=15,
-            storm_shrink_interval=5,
-            max_turns=100,
+            action_points_per_turn=8,
+            storm_start_turn=40,  # Storm starts later
+            storm_shrink_interval=12,  # Slower shrinking
+            storm_damage=1,
+            max_turns=300,
         )
 
 

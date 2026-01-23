@@ -700,10 +700,26 @@ function BattleScene({
     // Spawn projectiles for fire actions
     currentTurn.fire_results.forEach((fire, i) => {
       setTimeout(() => {
+        // Find the ship that fired to get its position
         const isPlayer1 = currentTurn.player === 0;
-        const startPos: [number, number, number] = isPlayer1
-          ? [-gridSize[0] / 2 - 3, gridSize[2] / 2, 0]
-          : [gridSize[0] / 2 + 3, gridSize[2] / 2, 0];
+        const ships = isPlayer1 ? gameState.player1_ships : gameState.player2_ships;
+        const firingShip = ships.find(s => s.id === fire.ship_id);
+
+        let startPos: [number, number, number];
+        if (firingShip && firingShip.positions.length > 0) {
+          // Use the center of the firing ship
+          const shipCenter = firingShip.positions[Math.floor(firingShip.positions.length / 2)];
+          startPos = [
+            shipCenter.x + offset[0],
+            shipCenter.z + offset[2],
+            shipCenter.y + offset[1],
+          ];
+        } else {
+          // Fallback to edge position
+          startPos = isPlayer1
+            ? [-gridSize[0] / 2 - 3, gridSize[2] / 2, 0]
+            : [gridSize[0] / 2 + 3, gridSize[2] / 2, 0];
+        }
 
         setProjectiles(prev => [...prev, {
           id: projectileId.current++,
@@ -731,7 +747,7 @@ function BattleScene({
         }]);
       }, i * 100 + currentTurn.fire_results.length * 150);
     });
-  }, [currentTurn, gridSize, offset]);
+  }, [currentTurn, gridSize, offset, gameState]);
 
   const removeProjectile = (id: number) => {
     setProjectiles(prev => prev.filter(p => p.id !== id));

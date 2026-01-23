@@ -20,7 +20,7 @@ class RandomBot(FleetBot):
     """
     A baseline bot that takes random actions.
 
-    Useful for testing and comparing bot strategies.
+    Each ship gets 1 action per turn (move OR fire OR ability).
     """
 
     def __init__(self):
@@ -38,35 +38,31 @@ class RandomBot(FleetBot):
 
     def get_actions(self, view: GameView) -> List[Action]:
         actions = []
-        action_points_used = 0
 
-        # Get list of alive ships
-        alive_ships = view.get_alive_ships()
-        random.shuffle(alive_ships)
+        # Each ship that hasn't acted gets one action
+        ships_to_act = view.get_ships_that_can_act()
+        random.shuffle(ships_to_act)
 
-        for ship in alive_ships:
-            if action_points_used >= view.action_points:
-                break
-
-            cost = view.get_action_cost(ship)
-            if action_points_used + cost > view.action_points:
-                continue
-
-            # Pick random action type
-            action_type = random.choice(['fire', 'move', 'scan', 'move'])  # Bias toward move
+        for ship in ships_to_act:
+            # Pick random action type (bias toward move)
+            action_type = random.choice(['fire', 'move', 'move'])
 
             action = None
 
             if action_type == 'fire':
                 action = self._random_fire(ship, view)
-            elif action_type == 'scan':
-                action = self._random_scan(ship, view)
             elif action_type == 'move':
                 action = self._random_move(ship, view)
 
+            # If chosen action failed, try the other
+            if not action:
+                if action_type == 'fire':
+                    action = self._random_move(ship, view)
+                else:
+                    action = self._random_fire(ship, view)
+
             if action:
                 actions.append(action)
-                action_points_used += cost
 
         return actions
 
@@ -103,32 +99,6 @@ class RandomBot(FleetBot):
                 continue
 
             return FireAction(ship_id=ship.id, target=target)
-
-        return None
-
-    def _random_scan(self, ship: VisibleShip, view: GameView) -> Optional[ScanAction]:
-        """Scan a random position."""
-        if not ship.can_scan():
-            return None
-
-        scan_range = ship.get_scan_range()
-        if scan_range == 0:
-            return None
-
-        # Scan random position in range
-        for _ in range(20):
-            target = Position(
-                ship.center.x + random.randint(-scan_range, scan_range),
-                ship.center.y + random.randint(-scan_range, scan_range),
-                ship.center.z + random.randint(-scan_range, scan_range)
-            )
-
-            if not view.is_valid_position(target):
-                continue
-            if ship.center.distance_to(target) > scan_range:
-                continue
-
-            return ScanAction(ship_id=ship.id, center=target)
 
         return None
 

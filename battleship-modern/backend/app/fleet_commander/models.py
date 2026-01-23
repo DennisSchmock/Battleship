@@ -276,6 +276,7 @@ class Ship:
     abilities: Dict[AbilityType, ActiveAbility] = field(default_factory=dict)
     movement_remaining: int = 0
     has_moved_this_turn: bool = False
+    has_acted_this_turn: bool = False  # Each ship gets 1 action per turn
     is_destroyed: bool = False
 
     def __post_init__(self):
@@ -294,6 +295,7 @@ class Ship:
         """Reset ship for new turn."""
         self.movement_remaining = self.config.speed
         self.has_moved_this_turn = False
+        self.has_acted_this_turn = False
         for ability in self.abilities.values():
             ability.reset_turn()
 
@@ -323,6 +325,7 @@ class Ship:
             "max_hp": self.config.max_hp,
             "speed": self.config.speed,
             "movement_remaining": self.movement_remaining,
+            "has_acted": self.has_acted_this_turn,
             "is_destroyed": self.is_destroyed,
             "abilities": {
                 k.value: {"can_use": v.can_use, "cooldown": v.cooldown_remaining}
@@ -456,8 +459,8 @@ class GameConfig:
     # Fleet configuration
     fleet_config: FleetConfig = field(default_factory=FleetConfig)
 
-    # Action points per turn
-    action_points_per_turn: int = 10
+    # Each ship gets 1 action per turn (move OR fire OR ability)
+    # No global action points - simpler, more chess-like
 
     # Storm configuration - slow nudging, not stressful
     storm_start_turn: int = 50  # Storm doesn't start until turn 50
@@ -488,7 +491,6 @@ class GameConfig:
                 ShipType.ARTILLERY,
                 ShipType.MINELAYER,
             ]),
-            action_points_per_turn=8,
             storm_start_turn=40,
             storm_shrink_interval=12,
             storm_damage=1,
@@ -518,9 +520,6 @@ class PlayerState:
     # Fog of war - what this player knows
     known_cells: Dict[Position, KnownCell] = field(default_factory=dict)
     visited_cells: Set[Position] = field(default_factory=set)
-
-    # Action points
-    action_points: int = 0
 
     @property
     def ships_alive(self) -> int:

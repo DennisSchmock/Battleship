@@ -203,7 +203,6 @@ class FleetCommanderGame:
 
         # Reset all ships for first turn
         for player in self.players:
-            player.action_points = self.config.action_points_per_turn
             for ship in player.ships:
                 ship.reset_turn()
 
@@ -241,7 +240,7 @@ class FleetCommanderGame:
     # =========================================================================
 
     def execute_turn(self, actions: List[Action]) -> TurnResult:
-        """Execute a player's turn."""
+        """Execute a player's turn. Each ship gets 1 action per turn."""
         player = self.current_player
         result = TurnResult(player_id=player.player_id, turn=self.turn)
 
@@ -256,12 +255,12 @@ class FleetCommanderGame:
                 ))
                 continue
 
-            # Check action points
-            if player.action_points < ship.config.action_cost:
+            # Each ship can only act once per turn
+            if ship.has_acted_this_turn:
                 result.actions_taken.append(ActionResult(
                     success=False,
                     action=action,
-                    message="Not enough action points"
+                    message="Ship has already acted this turn"
                 ))
                 continue
 
@@ -283,8 +282,9 @@ class FleetCommanderGame:
                     message="Unknown action type"
                 )
 
+            # Mark ship as having acted if action was successful
             if action_result.success:
-                player.action_points -= ship.config.action_cost
+                ship.has_acted_this_turn = True
 
             result.actions_taken.append(action_result)
 
@@ -779,9 +779,8 @@ class FleetCommanderGame:
         if self.current_player_idx == 0:
             self.turn += 1
 
-        # Reset for next player's turn
+        # Reset ships for next player's turn
         next_player = self.current_player
-        next_player.action_points = self.config.action_points_per_turn
         for ship in next_player.ships:
             if not ship.is_destroyed:
                 ship.reset_turn()
@@ -864,7 +863,6 @@ class FleetCommanderGame:
             "turn": self.turn,
             "phase": self.phase.value,
             "my_player_id": player_id,
-            "action_points": player.action_points,
             "my_ships": own_ships,
             "visible_enemy_ships": visible_enemy_ships,
             "known_cells": {

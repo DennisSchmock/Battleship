@@ -39,8 +39,13 @@ class VisibleShip:
     max_hp: Optional[int] = None
     speed: Optional[int] = None
     movement_remaining: Optional[int] = None
+    has_acted: bool = False  # Has this ship acted this turn?
     abilities: Optional[Dict[AbilityType, bool]] = None  # ability -> can_use (legacy)
     ability_info: Optional[Dict[AbilityType, AbilityInfo]] = None  # Full ability details
+
+    def can_act(self) -> bool:
+        """Check if this ship can still act this turn."""
+        return not self.has_acted and self.hp is not None and self.hp > 0
 
     def can_fire(self) -> bool:
         """Check if this ship can fire this turn."""
@@ -112,10 +117,9 @@ class GameView:
     """The game state from a bot's perspective."""
     turn: int
     my_player_id: int
-    action_points: int
     grid_size: Tuple[int, int, int]
 
-    # Ships
+    # Ships - each ship gets 1 action per turn
     my_ships: List[VisibleShip]
     visible_enemy_ships: List[VisibleShip]
 
@@ -172,17 +176,21 @@ class GameView:
                 return ship
         return None
 
+    def get_ships_that_can_act(self) -> List[VisibleShip]:
+        """Get all my ships that can still act this turn (haven't acted yet)."""
+        return [s for s in self.my_ships if s.can_act()]
+
     def get_ships_that_can_fire(self) -> List[VisibleShip]:
         """Get all my ships that can fire this turn."""
-        return [s for s in self.my_ships if s.hp and s.hp > 0 and s.can_fire()]
+        return [s for s in self.my_ships if s.can_act() and s.can_fire()]
 
     def get_ships_that_can_scan(self) -> List[VisibleShip]:
         """Get all my ships that can scan this turn."""
-        return [s for s in self.my_ships if s.hp and s.hp > 0 and s.can_scan()]
+        return [s for s in self.my_ships if s.can_act() and s.can_scan()]
 
     def get_ships_that_can_move(self) -> List[VisibleShip]:
         """Get all my ships that can move this turn."""
-        return [s for s in self.my_ships if s.hp and s.hp > 0 and s.can_move()]
+        return [s for s in self.my_ships if s.can_act() and s.can_move()]
 
     def get_ships_by_type(self, ship_type: ShipType) -> List[VisibleShip]:
         """Get all my ships of a specific type."""
@@ -203,12 +211,6 @@ class GameView:
             return []
         return [e for e in self.visible_enemy_ships
                 if any(ship.center.distance_to(p) <= fire_range for p in e.positions)]
-
-    def get_action_cost(self, ship: VisibleShip) -> int:
-        """Get the action point cost to command a ship."""
-        if ship.ship_type:
-            return SHIP_CONFIGS[ship.ship_type].action_cost
-        return 1
 
 
 class FleetBot(ABC):
@@ -431,6 +433,7 @@ def create_game_view(state_dict: dict) -> GameView:
             max_hp=s["max_hp"],
             speed=s["speed"],
             movement_remaining=s["movement_remaining"],
+            has_acted=s.get("has_acted", False),
             abilities=abilities,
             ability_info=ability_info
         ))
@@ -463,7 +466,6 @@ def create_game_view(state_dict: dict) -> GameView:
     return GameView(
         turn=state_dict["turn"],
         my_player_id=state_dict["my_player_id"],
-        action_points=state_dict["action_points"],
         grid_size=tuple(state_dict["grid_size"]),
         my_ships=my_ships,
         visible_enemy_ships=visible_enemy,

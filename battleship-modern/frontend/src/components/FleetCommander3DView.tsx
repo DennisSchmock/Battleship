@@ -1014,9 +1014,9 @@ export function FleetCommander3DView() {
             is_destroyed: s.is_destroyed || false,
           }));
 
-          // Build turn data for animations
+          // Build turn data for animations (only successful actions)
           const fireResults: FireResult[] = d.actions
-            .filter((a: any) => a.type === 'fire' && a.data?.target)
+            .filter((a: any) => a.type === 'fire' && a.data?.target && a.success !== false)
             .map((a: any) => ({
               ship_id: a.data.ship_id,
               target: { x: a.data.target[0], y: a.data.target[1], z: a.data.target[2] },
@@ -1203,9 +1203,9 @@ export function FleetCommander3DView() {
     if (event.event_type === 'turn_result' && event.data.game_state) {
       const gs = event.data.game_state;
 
-      // Build turn data for animations from actions_taken
+      // Build turn data for animations from actions_taken (only successful)
       const fireResults: FireResult[] = (event.data.actions_taken || [])
-        .filter((a: any) => a.action?.type === 'fire')
+        .filter((a: any) => a.action?.type === 'fire' && a.success !== false)
         .map((a: any) => ({
           ship_id: a.action.ship_id,
           target: { x: a.action.target[0], y: a.action.target[1], z: a.action.target[2] },

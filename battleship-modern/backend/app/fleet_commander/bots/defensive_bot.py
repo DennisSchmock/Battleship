@@ -7,8 +7,7 @@ Prioritizes:
 - Counter-attacking only when safe
 """
 import random
-from typing import List, Tuple, Optional, Set, Dict
-from dataclasses import dataclass
+from typing import List, Tuple, Optional, Set
 
 from ..bot_interface import (
     FleetBot, GameView, VisibleShip, random_fleet_placement,
@@ -17,7 +16,7 @@ from ..bot_interface import (
 from ..models import (
     Position, Direction, ShipType, AbilityType, CellStatus,
     GameConfig, Action, MoveAction, FireAction, ScanAction, AbilityAction,
-    TurnResult, SHIP_CONFIGS
+    TurnResult
 )
 
 
@@ -79,27 +78,26 @@ class DefensiveBot(FleetBot):
         danger_zone = self._calculate_danger_zone(enemy_positions)
 
         # Process ships by priority: damaged first, then support, then others
-        damaged_ships = [s for s in view.my_ships if s.hp and s.max_hp and s.hp < s.max_hp and s.hp > 0]
-        support_ships = [s for s in view.my_ships if s.ship_type == ShipType.SUPPORT and s.hp and s.hp > 0]
-        other_ships = [s for s in view.my_ships if s not in damaged_ships and s not in support_ships
-                       and s.hp and s.hp > 0]
+        damaged_ships = view.get_damaged_ships()
+        support_ships = view.get_ships_by_type(ShipType.SUPPORT)
+        other_ships = [s for s in view.get_alive_ships()
+                       if s not in damaged_ships and s not in support_ships]
 
         # Phase 1: Support ships repair damaged allies
         for support in support_ships:
             if action_points_used >= view.action_points:
                 break
 
-            cost = SHIP_CONFIGS[support.ship_type].action_cost
+            cost = view.get_action_cost(support)
             if action_points_used + cost > view.action_points:
                 continue
 
             # Find damaged friendly ship in range
-            if support.abilities and AbilityType.REPAIR in support.abilities:
-                if support.abilities[AbilityType.REPAIR]:
-                    support_center = support.positions[len(support.positions) // 2]
+            if support.ability_info and AbilityType.REPAIR in support.ability_info:
+                if support.ability_info[AbilityType.REPAIR].can_use:
+                    repair_range = support.ability_info[AbilityType.REPAIR].range
                     for damaged in damaged_ships:
-                        damaged_center = damaged.positions[len(damaged.positions) // 2]
-                        if support_center.distance_to(damaged_center) <= 2:
+                        if support.center.distance_to(damaged.center) <= repair_range:
                             actions.append(AbilityAction(
                                 ship_id=support.id,
                                 ability=AbilityType.REPAIR,
@@ -110,7 +108,7 @@ class DefensiveBot(FleetBot):
                     else:
                         # No one to repair, move toward damaged ships
                         if damaged_ships:
-                            move = self._move_toward(support, damaged_ships[0].positions[0], view, danger_zone)
+                            move = self._move_toward(support, damaged_ships[0].center, view, danger_zone)
                             if move:
                                 actions.append(move)
                                 action_points_used += cost
@@ -120,16 +118,14 @@ class DefensiveBot(FleetBot):
             if action_points_used >= view.action_points:
                 break
 
-            cost = SHIP_CONFIGS[ship.ship_type].action_cost
+            cost = view.get_action_cost(ship)
             if action_points_used + cost > view.action_points:
                 continue
 
-            ship_center = ship.positions[len(ship.positions) // 2]
-
             # Use shield if available and near enemies
-            if ship.abilities and AbilityType.SHIELD in ship.abilities:
-                if ship.abilities[AbilityType.SHIELD]:
-                    in_danger = any(ship_center.distance_to(e) <= 5 for e in enemy_positions)
+            if ship.ability_info and AbilityType.SHIELD in ship.ability_info:
+                if ship.ability_info[AbilityType.SHIELD].can_use:
+                    in_danger = any(ship.center.distance_to(e) <= 5 for e in enemy_positions)
                     if in_danger:
                         actions.append(AbilityAction(
                             ship_id=ship.id,
@@ -149,18 +145,17 @@ class DefensiveBot(FleetBot):
             if action_points_used >= view.action_points:
                 break
 
-            cost = SHIP_CONFIGS[ship.ship_type].action_cost
+            cost = view.get_action_cost(ship)
             if action_points_used + cost > view.action_points:
                 continue
 
-            ship_center = ship.positions[len(ship.positions) // 2]
             action = None
 
             # Minelayers deploy mines in strategic positions
             if ship.ship_type == ShipType.MINELAYER:
-                if ship.abilities and AbilityType.DEPLOY_MINE in ship.abilities:
-                    if ship.abilities[AbilityType.DEPLOY_MINE]:
-                        mine_pos = self._find_mine_position(ship_center, view, enemy_positions)
+                if ship.ability_info and AbilityType.DEPLOY_MINE in ship.ability_info:
+                    if ship.ability_info[AbilityType.DEPLOY_MINE].can_use:
+                        mine_pos = self._find_mine_position(ship.center, view, enemy_positions)
                         if mine_pos:
                             action = AbilityAction(
                                 ship_id=ship.id,
@@ -170,19 +165,17 @@ class DefensiveBot(FleetBot):
 
             # Scouts scan for threats
             if not action and ship.ship_type == ShipType.SCOUT:
-                if ship.abilities and AbilityType.SCAN in ship.abilities:
-                    if ship.abilities[AbilityType.SCAN]:
-                        scan_pos = self._find_scan_position(ship_center, view)
-                        if scan_pos:
-                            action = ScanAction(ship_id=ship.id, center=scan_pos)
+                if ship.can_scan():
+                    scan_pos = self._find_scan_position(ship, view)
+                    if scan_pos:
+                        action = ScanAction(ship_id=ship.id, center=scan_pos)
 
             # Long-range ships counter-attack
-            if not action and ship.abilities and AbilityType.FIRE in ship.abilities:
-                if ship.abilities[AbilityType.FIRE]:
-                    fire_range = self._get_fire_range(ship)
-                    target = self._find_safe_target(ship_center, enemy_positions, fire_range, danger_zone)
-                    if target:
-                        action = FireAction(ship_id=ship.id, target=target)
+            if not action and ship.can_fire():
+                fire_range = ship.get_fire_range()
+                target = self._find_safe_target(ship.center, enemy_positions, fire_range, danger_zone)
+                if target:
+                    action = FireAction(ship_id=ship.id, target=target)
 
             # If no good attack, maintain safe distance
             if not action:
@@ -206,13 +199,6 @@ class DefensiveBot(FleetBot):
                             danger.add(Position(enemy.x + dx, enemy.y + dy, enemy.z + dz))
         return danger
 
-    def _get_fire_range(self, ship: VisibleShip) -> int:
-        """Get fire range for a ship."""
-        for ab in SHIP_CONFIGS[ship.ship_type].abilities:
-            if ab.ability_type == AbilityType.FIRE:
-                return ab.range
-        return 4
-
     def _find_safe_target(self, ship_pos: Position, enemies: List[Position],
                           fire_range: int, danger: Set[Position]) -> Optional[Position]:
         """Find enemy to attack while staying safe."""
@@ -228,12 +214,14 @@ class DefensiveBot(FleetBot):
     def _move_toward(self, ship: VisibleShip, target: Position, view: GameView,
                      danger: Set[Position]) -> Optional[MoveAction]:
         """Move toward a target, avoiding danger."""
-        ship_center = ship.positions[len(ship.positions) // 2]
+        if not ship.can_move():
+            return None
+
         best_dir = None
-        best_dist = ship_center.distance_to(target)
+        best_dist = ship.center.distance_to(target)
 
         for direction in Direction:
-            new_pos = ship_center.move(direction)
+            new_pos = ship.center.move(direction)
             if not view.is_valid_position(new_pos):
                 continue
             if view.is_in_storm(new_pos):
@@ -247,13 +235,14 @@ class DefensiveBot(FleetBot):
                 best_dir = direction
 
         if best_dir:
-            return MoveAction(ship_id=ship.id, path=[ship_center.move(best_dir)])
+            return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
         return None
 
     def _get_retreat_move(self, ship: VisibleShip, view: GameView,
                           danger: Set[Position]) -> Optional[MoveAction]:
         """Move away from danger toward safe zone."""
-        ship_center = ship.positions[len(ship.positions) // 2]
+        if not ship.can_move():
+            return None
 
         if self.safe_zone_center:
             return self._move_toward(ship, self.safe_zone_center, view, set())  # Ignore danger when retreating
@@ -263,20 +252,18 @@ class DefensiveBot(FleetBot):
     def _get_defensive_move(self, ship: VisibleShip, view: GameView,
                             enemies: List[Position], danger: Set[Position]) -> Optional[MoveAction]:
         """Move to maintain safe distance from enemies."""
-        ship_center = ship.positions[len(ship.positions) // 2]
-
-        if not enemies:
+        if not ship.can_move() or not enemies:
             return None
 
         # Move away if too close
-        closest_enemy = min(enemies, key=lambda e: ship_center.distance_to(e))
-        if ship_center.distance_to(closest_enemy) < 5:
+        closest_enemy = min(enemies, key=lambda e: ship.center.distance_to(e))
+        if ship.center.distance_to(closest_enemy) < 5:
             # Find direction away from enemy
             best_dir = None
-            best_dist = ship_center.distance_to(closest_enemy)
+            best_dist = ship.center.distance_to(closest_enemy)
 
             for direction in Direction:
-                new_pos = ship_center.move(direction)
+                new_pos = ship.center.move(direction)
                 if not view.is_valid_position(new_pos):
                     continue
                 if view.is_in_storm(new_pos):
@@ -287,7 +274,7 @@ class DefensiveBot(FleetBot):
                     best_dir = direction
 
             if best_dir:
-                return MoveAction(ship_id=ship.id, path=[ship_center.move(best_dir)])
+                return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
 
         return None
 
@@ -310,22 +297,25 @@ class DefensiveBot(FleetBot):
 
         return None
 
-    def _find_scan_position(self, ship_pos: Position, view: GameView) -> Optional[Position]:
+    def _find_scan_position(self, ship: VisibleShip, view: GameView) -> Optional[Position]:
         """Find position to scan for enemies."""
-        scan_range = 5
+        scan_range = ship.get_scan_range()
+        if scan_range == 0:
+            return None
+
         best_pos = None
         best_unknown = 0
 
         for _ in range(20):
             target = Position(
-                ship_pos.x + random.randint(-scan_range, scan_range),
+                ship.center.x + random.randint(-scan_range, scan_range),
                 random.randint(0, view.grid_size[1] - 1),
                 random.randint(0, view.grid_size[2] - 1)
             )
 
             if not view.is_valid_position(target):
                 continue
-            if ship_pos.distance_to(target) > scan_range:
+            if ship.center.distance_to(target) > scan_range:
                 continue
 
             unknown = sum(1 for dx in range(-2, 3) for dy in range(-2, 3) for dz in range(-2, 3)

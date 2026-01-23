@@ -8,7 +8,6 @@ Prioritizes:
 """
 import random
 from typing import List, Tuple, Optional, Set
-from dataclasses import dataclass
 
 from ..bot_interface import (
     FleetBot, GameView, VisibleShip, random_fleet_placement,
@@ -17,7 +16,7 @@ from ..bot_interface import (
 from ..models import (
     Position, Direction, ShipType, AbilityType, CellStatus,
     GameConfig, Action, MoveAction, FireAction, ScanAction, AbilityAction,
-    TurnResult, SHIP_CONFIGS
+    TurnResult
 )
 
 
@@ -68,7 +67,7 @@ class AggressiveBot(FleetBot):
                           ShipType.SCOUT, ShipType.MINELAYER]
 
         ships_sorted = sorted(
-            [s for s in view.my_ships if s.hp and s.hp > 0 and s.ship_type],
+            view.get_alive_ships(),
             key=lambda s: firepower_order.index(s.ship_type) if s.ship_type in firepower_order else 99
         )
 
@@ -76,55 +75,55 @@ class AggressiveBot(FleetBot):
             if action_points_used >= view.action_points:
                 break
 
-            cost = SHIP_CONFIGS[ship.ship_type].action_cost
+            cost = view.get_action_cost(ship)
             if action_points_used + cost > view.action_points:
                 continue
 
-            ship_center = ship.positions[len(ship.positions) // 2]
             action = None
 
-            # Try to attack first
-            if ship.abilities:
+            # Try to attack first using ability_info
+            if ship.ability_info:
                 # Use area bombardment if available and enemies are clustered
-                if (AbilityType.AREA_BOMBARDMENT in ship.abilities and
-                    ship.abilities[AbilityType.AREA_BOMBARDMENT] and
+                if (AbilityType.AREA_BOMBARDMENT in ship.ability_info and
+                    ship.ability_info[AbilityType.AREA_BOMBARDMENT].can_use and
                     len(enemy_positions) >= 2):
-                    # Find position with most enemies nearby
-                    best_target = self._find_bombardment_target(ship_center, enemy_positions, view)
+                    bomb_range = ship.ability_info[AbilityType.AREA_BOMBARDMENT].range
+                    best_target = self._find_bombardment_target(ship.center, enemy_positions, bomb_range)
                     if best_target:
-                        action = AbilityAction(
+                        action = FireAction(
                             ship_id=ship.id,
-                            ability=AbilityType.AREA_BOMBARDMENT,
-                            target=best_target
+                            target=best_target,
+                            ability=AbilityType.AREA_BOMBARDMENT
                         )
 
                 # Try burst fire for destroyers
-                if not action and AbilityType.BURST_FIRE in ship.abilities:
-                    if ship.abilities[AbilityType.BURST_FIRE] and enemy_positions:
-                        target = self._find_closest_target(ship_center, enemy_positions, range_limit=4)
+                if not action and AbilityType.BURST_FIRE in ship.ability_info:
+                    if ship.ability_info[AbilityType.BURST_FIRE].can_use and enemy_positions:
+                        burst_range = ship.ability_info[AbilityType.BURST_FIRE].range
+                        target = self._find_closest_target(ship.center, enemy_positions, burst_range)
                         if target:
-                            action = AbilityAction(
+                            action = FireAction(
                                 ship_id=ship.id,
-                                ability=AbilityType.BURST_FIRE,
-                                target=target
+                                target=target,
+                                ability=AbilityType.BURST_FIRE
                             )
 
                 # Regular fire
-                if not action and AbilityType.FIRE in ship.abilities:
-                    if ship.abilities[AbilityType.FIRE]:
-                        fire_range = self._get_fire_range(ship)
-                        target = self._find_closest_target(ship_center, enemy_positions, fire_range)
+                if not action and AbilityType.FIRE in ship.ability_info:
+                    if ship.ability_info[AbilityType.FIRE].can_use:
+                        fire_range = ship.get_fire_range()
+                        target = self._find_closest_target(ship.center, enemy_positions, fire_range)
                         if target:
                             action = FireAction(ship_id=ship.id, target=target)
                         elif self.hit_positions:
                             # Fire at last known hit positions
                             for hit_pos in list(self.hit_positions)[:3]:
-                                if ship_center.distance_to(hit_pos) <= fire_range:
+                                if ship.center.distance_to(hit_pos) <= fire_range:
                                     action = FireAction(ship_id=ship.id, target=hit_pos)
                                     break
                         else:
                             # Speculative fire toward enemy side
-                            target = self._get_speculative_target(ship_center, view, fire_range)
+                            target = self._get_speculative_target(ship.center, view, fire_range)
                             if target:
                                 action = FireAction(ship_id=ship.id, target=target)
 
@@ -138,17 +137,9 @@ class AggressiveBot(FleetBot):
 
         return actions
 
-    def _get_fire_range(self, ship: VisibleShip) -> int:
-        """Get fire range for a ship."""
-        for ab in SHIP_CONFIGS[ship.ship_type].abilities:
-            if ab.ability_type == AbilityType.FIRE:
-                return ab.range
-        return 4
-
     def _find_bombardment_target(self, ship_pos: Position, enemies: List[Position],
-                                  view: GameView) -> Optional[Position]:
+                                  bomb_range: int) -> Optional[Position]:
         """Find best target for area bombardment."""
-        bomb_range = 5
         best_target = None
         best_count = 0
 
@@ -204,11 +195,12 @@ class AggressiveBot(FleetBot):
     def _get_advance_move(self, ship: VisibleShip, view: GameView,
                           enemies: List[Position]) -> Optional[MoveAction]:
         """Move aggressively toward enemies or enemy side."""
-        ship_center = ship.positions[len(ship.positions) // 2]
+        if not ship.can_move():
+            return None
 
         # Determine target: closest enemy or enemy side
         if enemies:
-            target = min(enemies, key=lambda e: ship_center.distance_to(e))
+            target = min(enemies, key=lambda e: ship.center.distance_to(e))
         else:
             # Move toward enemy side
             target = Position(
@@ -218,10 +210,10 @@ class AggressiveBot(FleetBot):
             )
 
         best_dir = None
-        best_dist = ship_center.distance_to(target)
+        best_dist = ship.center.distance_to(target)
 
         for direction in Direction:
-            new_pos = ship_center.move(direction)
+            new_pos = ship.center.move(direction)
             if not view.is_valid_position(new_pos):
                 continue
             if view.is_in_storm(new_pos):
@@ -232,7 +224,7 @@ class AggressiveBot(FleetBot):
                 best_dir = direction
 
         if best_dir:
-            return MoveAction(ship_id=ship.id, path=[ship_center.move(best_dir)])
+            return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
 
         return None
 

@@ -12,7 +12,7 @@ from ..bot_interface import (
 from ..models import (
     Position, Direction, ShipType, AbilityType, CellStatus,
     GameConfig, Action, MoveAction, FireAction, ScanAction, AbilityAction,
-    TurnResult, SHIP_CONFIGS
+    TurnResult
 )
 
 
@@ -41,21 +41,20 @@ class RandomBot(FleetBot):
         action_points_used = 0
 
         # Get list of alive ships
-        alive_ships = [s for s in view.my_ships if s.hp and s.hp > 0]
+        alive_ships = view.get_alive_ships()
         random.shuffle(alive_ships)
 
         for ship in alive_ships:
             if action_points_used >= view.action_points:
                 break
 
-            cost = SHIP_CONFIGS[ship.ship_type].action_cost
+            cost = view.get_action_cost(ship)
             if action_points_used + cost > view.action_points:
                 continue
 
             # Pick random action type
             action_type = random.choice(['fire', 'move', 'scan', 'move'])  # Bias toward move
 
-            ship_center = ship.positions[len(ship.positions) // 2]
             action = None
 
             if action_type == 'fire':
@@ -73,39 +72,32 @@ class RandomBot(FleetBot):
 
     def _random_fire(self, ship: VisibleShip, view: GameView) -> Optional[FireAction]:
         """Fire at a random valid position."""
-        if not ship.abilities or AbilityType.FIRE not in ship.abilities:
-            return None
-        if not ship.abilities[AbilityType.FIRE]:
+        if not ship.can_fire():
             return None
 
-        ship_center = ship.positions[len(ship.positions) // 2]
-
-        # Get fire range
-        fire_range = 4
-        for ab in SHIP_CONFIGS[ship.ship_type].abilities:
-            if ab.ability_type == AbilityType.FIRE:
-                fire_range = ab.range
-                break
+        fire_range = ship.get_fire_range()
+        if fire_range == 0:
+            return None
 
         # Try to hit visible enemies first
         if view.visible_enemy_ships:
             enemy = random.choice(view.visible_enemy_ships)
             if enemy.positions:
                 target = random.choice(enemy.positions)
-                if ship_center.distance_to(target) <= fire_range:
+                if ship.center.distance_to(target) <= fire_range:
                     return FireAction(ship_id=ship.id, target=target)
 
         # Otherwise fire randomly within range
         for _ in range(20):
             target = Position(
-                ship_center.x + random.randint(-fire_range, fire_range),
-                ship_center.y + random.randint(-fire_range, fire_range),
-                ship_center.z + random.randint(-fire_range, fire_range)
+                ship.center.x + random.randint(-fire_range, fire_range),
+                ship.center.y + random.randint(-fire_range, fire_range),
+                ship.center.z + random.randint(-fire_range, fire_range)
             )
 
             if not view.is_valid_position(target):
                 continue
-            if ship_center.distance_to(target) > fire_range:
+            if ship.center.distance_to(target) > fire_range:
                 continue
             if view.get_cell_status(target) in [CellStatus.HIT, CellStatus.DESTROYED]:
                 continue
@@ -116,31 +108,24 @@ class RandomBot(FleetBot):
 
     def _random_scan(self, ship: VisibleShip, view: GameView) -> Optional[ScanAction]:
         """Scan a random position."""
-        if not ship.abilities or AbilityType.SCAN not in ship.abilities:
-            return None
-        if not ship.abilities[AbilityType.SCAN]:
+        if not ship.can_scan():
             return None
 
-        ship_center = ship.positions[len(ship.positions) // 2]
-
-        # Get scan range
-        scan_range = 5
-        for ab in SHIP_CONFIGS[ship.ship_type].abilities:
-            if ab.ability_type == AbilityType.SCAN:
-                scan_range = ab.range
-                break
+        scan_range = ship.get_scan_range()
+        if scan_range == 0:
+            return None
 
         # Scan random position in range
         for _ in range(20):
             target = Position(
-                ship_center.x + random.randint(-scan_range, scan_range),
-                ship_center.y + random.randint(-scan_range, scan_range),
-                ship_center.z + random.randint(-scan_range, scan_range)
+                ship.center.x + random.randint(-scan_range, scan_range),
+                ship.center.y + random.randint(-scan_range, scan_range),
+                ship.center.z + random.randint(-scan_range, scan_range)
             )
 
             if not view.is_valid_position(target):
                 continue
-            if ship_center.distance_to(target) > scan_range:
+            if ship.center.distance_to(target) > scan_range:
                 continue
 
             return ScanAction(ship_id=ship.id, center=target)
@@ -149,18 +134,19 @@ class RandomBot(FleetBot):
 
     def _random_move(self, ship: VisibleShip, view: GameView) -> Optional[MoveAction]:
         """Move in a random valid direction."""
-        ship_center = ship.positions[len(ship.positions) // 2]
+        if not ship.can_move():
+            return None
 
         # Get valid directions
         valid_dirs = []
         for direction in Direction:
-            new_pos = ship_center.move(direction)
+            new_pos = ship.center.move(direction)
             if view.is_valid_position(new_pos) and not view.is_in_storm(new_pos):
                 valid_dirs.append(direction)
 
         if valid_dirs:
             direction = random.choice(valid_dirs)
-            return MoveAction(ship_id=ship.id, path=[ship_center.move(direction)])
+            return MoveAction(ship_id=ship.id, path=[ship.center.move(direction)])
 
         return None
 

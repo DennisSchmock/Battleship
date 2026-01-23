@@ -9,7 +9,6 @@ Uses all ship abilities tactically:
 """
 import random
 from typing import List, Tuple, Optional, Set
-from dataclasses import dataclass
 
 from ..bot_interface import (
     FleetBot, GameView, VisibleShip, random_fleet_placement,
@@ -18,7 +17,7 @@ from ..bot_interface import (
 from ..models import (
     Position, Direction, ShipType, AbilityType, CellStatus,
     GameConfig, Action, MoveAction, FireAction, ScanAction, AbilityAction,
-    TurnResult, SHIP_CONFIGS
+    TurnResult
 )
 
 
@@ -60,18 +59,15 @@ class TacticalBot(FleetBot):
             self.enemy_last_seen[enemy.id] = (enemy.positions[0], view.turn)
 
         # Sort ships by priority (scouts first for recon)
-        ships_by_type = self._sort_ships_by_role(view.my_ships)
+        ships_by_type = self._sort_ships_by_role(view.get_alive_ships())
 
         # === Phase 1: SURVIVAL - Move ships out of storm ===
-        for ship in view.my_ships:
-            if ship.hp is None or ship.hp <= 0:
-                continue
-
+        for ship in view.get_alive_ships():
             in_storm = any(view.is_in_storm(p) for p in ship.positions)
             if in_storm:
                 move = self._get_storm_escape_move(ship, view)
                 if move:
-                    cost = SHIP_CONFIGS[ship.ship_type].action_cost
+                    cost = view.get_action_cost(ship)
                     if action_points_used + cost <= view.action_points:
                         actions.append(move)
                         action_points_used += cost
@@ -84,7 +80,7 @@ class TacticalBot(FleetBot):
             # Try to scan
             scan_action = self._get_scan_action(ship, view)
             if scan_action:
-                cost = SHIP_CONFIGS[ship.ship_type].action_cost
+                cost = view.get_action_cost(ship)
                 if action_points_used + cost <= view.action_points:
                     actions.append(scan_action)
                     action_points_used += cost
@@ -93,7 +89,7 @@ class TacticalBot(FleetBot):
             # Otherwise move toward center/unexplored
             move = self._get_explore_move(ship, view)
             if move:
-                cost = SHIP_CONFIGS[ship.ship_type].action_cost
+                cost = view.get_action_cost(ship)
                 if action_points_used + cost <= view.action_points:
                     actions.append(move)
                     action_points_used += cost
@@ -108,7 +104,7 @@ class TacticalBot(FleetBot):
                 # Try to attack
                 attack = self._get_attack_action(ship, view)
                 if attack:
-                    cost = SHIP_CONFIGS[ship.ship_type].action_cost
+                    cost = view.get_action_cost(ship)
                     if action_points_used + cost <= view.action_points:
                         actions.append(attack)
                         action_points_used += cost
@@ -117,7 +113,7 @@ class TacticalBot(FleetBot):
                 # Move toward last known enemy position
                 move = self._get_pursuit_move(ship, view)
                 if move:
-                    cost = SHIP_CONFIGS[ship.ship_type].action_cost
+                    cost = view.get_action_cost(ship)
                     if action_points_used + cost <= view.action_points:
                         actions.append(move)
                         action_points_used += cost
@@ -129,7 +125,7 @@ class TacticalBot(FleetBot):
 
             mine_action = self._get_mine_action(ship, view)
             if mine_action:
-                cost = SHIP_CONFIGS[ship.ship_type].action_cost
+                cost = view.get_action_cost(ship)
                 if action_points_used + cost <= view.action_points:
                     actions.append(mine_action)
                     action_points_used += cost
@@ -140,7 +136,7 @@ class TacticalBot(FleetBot):
         """Group ships by type."""
         result = {}
         for ship in ships:
-            if ship.ship_type is None or (ship.hp is not None and ship.hp <= 0):
+            if ship.ship_type is None:
                 continue
             if ship.ship_type not in result:
                 result[ship.ship_type] = []
@@ -149,7 +145,7 @@ class TacticalBot(FleetBot):
 
     def _get_storm_escape_move(self, ship: VisibleShip, view: GameView) -> Optional[MoveAction]:
         """Get move to escape the storm."""
-        if not view.storm_min or not view.storm_max:
+        if not view.storm_min or not view.storm_max or not ship.can_move():
             return None
 
         # Find direction toward safe zone center
@@ -159,12 +155,11 @@ class TacticalBot(FleetBot):
             (view.storm_min.z + view.storm_max.z) // 2
         )
 
-        ship_center = ship.positions[len(ship.positions) // 2]
         best_dir = None
-        best_dist = ship_center.distance_to(safe_center)
+        best_dist = ship.center.distance_to(safe_center)
 
         for direction in Direction:
-            new_pos = ship_center.move(direction)
+            new_pos = ship.center.move(direction)
             if not view.is_valid_position(new_pos):
                 continue
             dist = new_pos.distance_to(safe_center)
@@ -173,20 +168,27 @@ class TacticalBot(FleetBot):
                 best_dir = direction
 
         if best_dir:
-            target = ship_center.move(best_dir)
+            target = ship.center.move(best_dir)
             return MoveAction(ship_id=ship.id, path=[target])
 
         return None
 
     def _get_scan_action(self, ship: VisibleShip, view: GameView) -> Optional[ScanAction]:
         """Get a scan action for a scout."""
-        if not ship.abilities or AbilityType.SCAN not in ship.abilities:
+        if not ship.can_scan():
             return None
-        if not ship.abilities[AbilityType.SCAN]:
-            return None  # On cooldown
 
-        ship_center = ship.positions[len(ship.positions) // 2]
-        scan_config = SHIP_CONFIGS[ship.ship_type].abilities[0]  # First ability is scan
+        scan_range = ship.get_scan_range()
+        if scan_range == 0:
+            return None
+
+        # Get scan area size from ability info
+        scan_radius = 2  # Default
+        if ship.ability_info:
+            for ab_type in [AbilityType.SCAN, AbilityType.LONG_RANGE_SCAN]:
+                if ab_type in ship.ability_info:
+                    scan_radius = ship.ability_info[ab_type].area_size
+                    break
 
         # Find unexplored area to scan
         best_target = None
@@ -200,15 +202,14 @@ class TacticalBot(FleetBot):
                 random.randint(0, view.grid_size[2] - 1)
             )
 
-            if ship_center.distance_to(target) > scan_config.range:
+            if ship.center.distance_to(target) > scan_range:
                 continue
 
             # Count unknown cells in scan area
             unknown_count = 0
-            radius = scan_config.area_size
-            for dx in range(-radius, radius + 1):
-                for dy in range(-radius, radius + 1):
-                    for dz in range(-radius, radius + 1):
+            for dx in range(-scan_radius, scan_radius + 1):
+                for dy in range(-scan_radius, scan_radius + 1):
+                    for dz in range(-scan_radius, scan_radius + 1):
                         check = Position(target.x + dx, target.y + dy, target.z + dz)
                         if view.get_cell_status(check) == CellStatus.UNKNOWN:
                             unknown_count += 1
@@ -224,7 +225,8 @@ class TacticalBot(FleetBot):
 
     def _get_explore_move(self, ship: VisibleShip, view: GameView) -> Optional[MoveAction]:
         """Get move toward unexplored territory."""
-        ship_center = ship.positions[len(ship.positions) // 2]
+        if not ship.can_move():
+            return None
 
         # Move toward center of map if far from it
         map_center = Position(
@@ -234,10 +236,10 @@ class TacticalBot(FleetBot):
         )
 
         best_dir = None
-        best_dist = ship_center.distance_to(map_center)
+        best_dist = ship.center.distance_to(map_center)
 
         for direction in Direction:
-            new_pos = ship_center.move(direction)
+            new_pos = ship.center.move(direction)
             if not view.is_valid_position(new_pos):
                 continue
             if view.is_in_storm(new_pos):
@@ -248,46 +250,40 @@ class TacticalBot(FleetBot):
                 best_dir = direction
 
         if best_dir:
-            return MoveAction(ship_id=ship.id, path=[ship_center.move(best_dir)])
+            return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
 
         return None
 
     def _get_attack_action(self, ship: VisibleShip, view: GameView) -> Optional[FireAction]:
         """Get attack action against visible enemy."""
-        if not ship.abilities or AbilityType.FIRE not in ship.abilities:
-            return None
-        if not ship.abilities[AbilityType.FIRE]:
+        if not ship.can_fire():
             return None
 
-        ship_center = ship.positions[len(ship.positions) // 2]
-
-        # Find FIRE ability config
-        fire_range = 4  # Default
-        for ab in SHIP_CONFIGS[ship.ship_type].abilities:
-            if ab.ability_type == AbilityType.FIRE:
-                fire_range = ab.range
-                break
+        fire_range = ship.get_fire_range()
+        if fire_range == 0:
+            return None
 
         # Find target in range
         for enemy in view.visible_enemy_ships:
             for enemy_pos in enemy.positions:
-                if ship_center.distance_to(enemy_pos) <= fire_range:
+                if ship.center.distance_to(enemy_pos) <= fire_range:
                     return FireAction(ship_id=ship.id, target=enemy_pos)
 
         # Also check known SHIP cells
         for pos, status in view.known_cells.items():
             if status == CellStatus.SHIP:
-                if ship_center.distance_to(pos) <= fire_range:
+                if ship.center.distance_to(pos) <= fire_range:
                     return FireAction(ship_id=ship.id, target=pos)
 
         return None
 
     def _get_pursuit_move(self, ship: VisibleShip, view: GameView) -> Optional[MoveAction]:
         """Move toward last known enemy position."""
+        if not ship.can_move():
+            return None
+
         if not self.enemy_last_seen:
             return self._get_explore_move(ship, view)
-
-        ship_center = ship.positions[len(ship.positions) // 2]
 
         # Find closest last-seen enemy
         best_target = None
@@ -297,7 +293,7 @@ class TacticalBot(FleetBot):
             # Ignore old info
             if view.turn - turn > 10:
                 continue
-            dist = ship_center.distance_to(pos)
+            dist = ship.center.distance_to(pos)
             if dist < best_dist:
                 best_dist = dist
                 best_target = pos
@@ -306,7 +302,7 @@ class TacticalBot(FleetBot):
             # Move toward target
             best_dir = None
             for direction in Direction:
-                new_pos = ship_center.move(direction)
+                new_pos = ship.center.move(direction)
                 if not view.is_valid_position(new_pos):
                     continue
                 if view.is_in_storm(new_pos):
@@ -316,18 +312,16 @@ class TacticalBot(FleetBot):
                     best_dir = direction
 
             if best_dir:
-                return MoveAction(ship_id=ship.id, path=[ship_center.move(best_dir)])
+                return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
 
         return self._get_explore_move(ship, view)
 
     def _get_mine_action(self, ship: VisibleShip, view: GameView) -> Optional[AbilityAction]:
         """Place a mine in a strategic location."""
-        if not ship.abilities or AbilityType.DEPLOY_MINE not in ship.abilities:
+        if not ship.ability_info or AbilityType.DEPLOY_MINE not in ship.ability_info:
             return None
-        if not ship.abilities[AbilityType.DEPLOY_MINE]:
+        if not ship.ability_info[AbilityType.DEPLOY_MINE].can_use:
             return None
-
-        ship_center = ship.positions[len(ship.positions) // 2]
 
         # Place mine toward center of map (likely path)
         map_center = Position(
@@ -340,7 +334,7 @@ class TacticalBot(FleetBot):
         best_pos = None
         best_dist = float('inf')
 
-        for adj in get_adjacent_positions(ship_center, view.grid_size):
+        for adj in get_adjacent_positions(ship.center, view.grid_size):
             if view.is_in_storm(adj):
                 continue
             # Don't place on own mines

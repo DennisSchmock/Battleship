@@ -433,8 +433,7 @@ class Storm:
 class FleetConfig:
     """Configuration for a player's starting fleet."""
     ships: List[ShipType] = field(default_factory=lambda: [
-        ShipType.SCOUT,
-        ShipType.SCOUT,
+        ShipType.DESTROYER,
         ShipType.DESTROYER,
         ShipType.CRUISER,
         ShipType.SUPPORT,
@@ -475,14 +474,13 @@ class GameConfig:
 
     @classmethod
     def small(cls) -> 'GameConfig':
-        """Medium config - still with all ship types."""
+        """Smaller config for faster games."""
         return cls(
             grid_size=(24, 24, 12),
             player1_zone=(0, 5),
             player2_zone=(18, 23),
             fleet_config=FleetConfig(ships=[
-                ShipType.SCOUT,
-                ShipType.SCOUT,
+                ShipType.DESTROYER,
                 ShipType.DESTROYER,
                 ShipType.CRUISER,
                 ShipType.SUPPORT,
@@ -491,8 +489,8 @@ class GameConfig:
                 ShipType.MINELAYER,
             ]),
             action_points_per_turn=8,
-            storm_start_turn=40,  # Storm starts later
-            storm_shrink_interval=12,  # Slower shrinking
+            storm_start_turn=40,
+            storm_shrink_interval=12,
             storm_damage=1,
             max_turns=300,
         )

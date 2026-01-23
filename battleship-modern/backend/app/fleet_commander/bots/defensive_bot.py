@@ -163,13 +163,6 @@ class DefensiveBot(FleetBot):
                                 target=mine_pos
                             )
 
-            # Scouts scan for threats
-            if not action and ship.ship_type == ShipType.SCOUT:
-                if ship.can_scan():
-                    scan_pos = self._find_scan_position(ship, view)
-                    if scan_pos:
-                        action = ScanAction(ship_id=ship.id, center=scan_pos)
-
             # Long-range ships counter-attack
             if not action and ship.can_fire():
                 fire_range = ship.get_fire_range()

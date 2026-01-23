@@ -62,9 +62,9 @@ class AggressiveBot(FleetBot):
         for enemy in view.visible_enemy_ships:
             enemy_positions.extend(enemy.positions)
 
-        # Sort ships: Cruisers first (most firepower), then destroyers, etc.
+        # Sort ships: Cruisers first (most firepower), then artillery, destroyers, etc.
         firepower_order = [ShipType.CRUISER, ShipType.ARTILLERY, ShipType.DESTROYER,
-                          ShipType.SCOUT, ShipType.MINELAYER]
+                          ShipType.MINELAYER]
 
         ships_sorted = sorted(
             view.get_alive_ships(),

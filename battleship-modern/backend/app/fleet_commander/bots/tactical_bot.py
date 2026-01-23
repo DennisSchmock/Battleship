@@ -1,10 +1,11 @@
 """TacticalBot - A strategic bot for Fleet Commander.
 
 Uses all ship abilities tactically:
-- Scouts scan ahead and harass
-- Destroyers hunt detected enemies
-- Cruisers provide heavy firepower
-- Minelayers control territory
+- Destroyers hunt enemies with burst fire
+- Cruisers provide heavy firepower and area bombardment
+- Artillery for long-range precision strikes
+- Minelayers control territory with mines
+- Support ships repair damaged allies
 - All ships retreat from the storm
 """
 import random
@@ -72,29 +73,7 @@ class TacticalBot(FleetBot):
                         actions.append(move)
                         action_points_used += cost
 
-        # === Phase 2: RECON - Scouts scan unknown areas ===
-        for ship in ships_by_type.get(ShipType.SCOUT, []):
-            if action_points_used >= view.action_points:
-                break
-
-            # Try to scan
-            scan_action = self._get_scan_action(ship, view)
-            if scan_action:
-                cost = view.get_action_cost(ship)
-                if action_points_used + cost <= view.action_points:
-                    actions.append(scan_action)
-                    action_points_used += cost
-                    continue
-
-            # Otherwise move toward center/unexplored
-            move = self._get_explore_move(ship, view)
-            if move:
-                cost = view.get_action_cost(ship)
-                if action_points_used + cost <= view.action_points:
-                    actions.append(move)
-                    action_points_used += cost
-
-        # === Phase 3: ENGAGE - Combat ships attack visible enemies ===
+        # === Phase 2: ENGAGE - Combat ships attack visible enemies ===
         combat_types = [ShipType.DESTROYER, ShipType.CRUISER, ShipType.ARTILLERY]
         for ship_type in combat_types:
             for ship in ships_by_type.get(ship_type, []):

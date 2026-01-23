@@ -121,6 +121,7 @@ class AbilityConfig:
     uses_per_turn: int = 1  # How many times can use per turn
     requires_lock: bool = False  # Needs to lock on turn before
     blocks_movement: bool = False  # Can't move if using this
+    ap_cost: int = 1  # Action points cost to use this ability
 
 
 @dataclass
@@ -161,7 +162,7 @@ class ShipConfig:
     speed: int  # Max cells moved per turn
     stealth: float = 0.0  # 0-1, chance to avoid detection
     abilities: List[AbilityConfig] = field(default_factory=list)
-    action_cost: int = 1  # How many action points to command this ship
+    max_action_points: int = 3  # Action points available per turn (smaller ships = more AP)
 
 
 # Define all ship types
@@ -173,7 +174,7 @@ SHIP_CONFIGS = {
         max_hp=2,
         speed=3,
         stealth=0.5,
-        action_cost=1,
+        max_action_points=4,  # Small ship = more AP
         abilities=[
             AbilityConfig(AbilityType.SCAN, range=5, area_size=2),  # 5x5x5 area
             AbilityConfig(AbilityType.FIRE, range=2, damage=1),
@@ -185,10 +186,10 @@ SHIP_CONFIGS = {
         size=3,
         max_hp=4,
         speed=2,
-        action_cost=2,
+        max_action_points=3,  # Medium ship
         abilities=[
             AbilityConfig(AbilityType.FIRE, range=4, damage=1),
-            AbilityConfig(AbilityType.BURST_FIRE, range=4, damage=1, uses_per_turn=3, blocks_movement=True, cooldown=2),
+            AbilityConfig(AbilityType.BURST_FIRE, range=4, damage=1, uses_per_turn=3, blocks_movement=True, cooldown=2, ap_cost=2),
             AbilityConfig(AbilityType.ANTI_STEALTH_SCAN, range=4, area_size=2),
         ]
     ),
@@ -198,11 +199,11 @@ SHIP_CONFIGS = {
         size=4,
         max_hp=6,
         speed=2,
-        action_cost=3,
+        max_action_points=2,  # Large ship = fewer AP
         abilities=[
-            AbilityConfig(AbilityType.FIRE, range=6, damage=2),
-            AbilityConfig(AbilityType.AREA_BOMBARDMENT, range=5, damage=1, area_size=1, cooldown=3),  # 3x3x3
-            AbilityConfig(AbilityType.SHIELD, uses_per_turn=1),  # Absorbs 2 damage
+            AbilityConfig(AbilityType.FIRE, range=6, damage=2, ap_cost=2),  # Strong shot costs more
+            AbilityConfig(AbilityType.AREA_BOMBARDMENT, range=5, damage=1, area_size=1, cooldown=3, ap_cost=2),
+            AbilityConfig(AbilityType.SHIELD, uses_per_turn=1),  # Free defensive ability
         ]
     ),
     ShipType.SUPPORT: ShipConfig(
@@ -211,10 +212,10 @@ SHIP_CONFIGS = {
         size=3,
         max_hp=3,
         speed=1,
-        action_cost=2,
+        max_action_points=3,  # Medium ship
         abilities=[
-            AbilityConfig(AbilityType.REPAIR, range=2, damage=-1),  # Heals 1 HP
-            AbilityConfig(AbilityType.JAM, range=0, area_size=2, cooldown=2),  # 5x5x5 jam
+            AbilityConfig(AbilityType.REPAIR, range=2, damage=-1),  # 1 AP to heal
+            AbilityConfig(AbilityType.JAM, range=0, area_size=2, cooldown=2, ap_cost=2),
             AbilityConfig(AbilityType.DEPLOY_DECOY, range=3, cooldown=3),
         ]
     ),
@@ -224,11 +225,11 @@ SHIP_CONFIGS = {
         size=5,
         max_hp=8,
         speed=1,
-        action_cost=4,
+        max_action_points=2,  # Very large ship
         abilities=[
-            AbilityConfig(AbilityType.LONG_RANGE_SCAN, range=7, area_size=3),  # 7x7x7
-            AbilityConfig(AbilityType.LAUNCH_DRONE, range=0, cooldown=2),  # Spawn drone
-            AbilityConfig(AbilityType.FIRE, range=2, damage=1),  # Weak defense
+            AbilityConfig(AbilityType.LONG_RANGE_SCAN, range=7, area_size=3),  # 1 AP
+            AbilityConfig(AbilityType.LAUNCH_DRONE, range=0, cooldown=2),  # 1 AP
+            AbilityConfig(AbilityType.FIRE, range=2, damage=1),  # 1 AP weak defense
         ]
     ),
     ShipType.ARTILLERY: ShipConfig(
@@ -237,11 +238,11 @@ SHIP_CONFIGS = {
         size=3,
         max_hp=3,
         speed=1,
-        action_cost=3,
+        max_action_points=3,  # Medium ship
         abilities=[
-            AbilityConfig(AbilityType.PRECISION_STRIKE, range=12, damage=3, requires_lock=True, blocks_movement=True),
-            AbilityConfig(AbilityType.PIERCING_SHOT, range=8, damage=2, blocks_movement=True),
-            AbilityConfig(AbilityType.SCAN, range=3, area_size=1),
+            AbilityConfig(AbilityType.PRECISION_STRIKE, range=12, damage=3, requires_lock=True, blocks_movement=True, ap_cost=3),
+            AbilityConfig(AbilityType.PIERCING_SHOT, range=8, damage=2, blocks_movement=True, ap_cost=2),
+            AbilityConfig(AbilityType.SCAN, range=3, area_size=1),  # 1 AP to scan
         ]
     ),
     ShipType.MINELAYER: ShipConfig(
@@ -251,9 +252,9 @@ SHIP_CONFIGS = {
         max_hp=2,
         speed=2,
         stealth=0.3,
-        action_cost=1,
+        max_action_points=4,  # Small nimble ship
         abilities=[
-            AbilityConfig(AbilityType.DEPLOY_MINE, range=1, damage=2, cooldown=1),
+            AbilityConfig(AbilityType.DEPLOY_MINE, range=1, damage=2, cooldown=1, ap_cost=2),
             AbilityConfig(AbilityType.DEPLOY_SENSOR, range=2, cooldown=2),
             AbilityConfig(AbilityType.FIRE, range=2, damage=1),
         ]
@@ -276,13 +277,15 @@ class Ship:
     abilities: Dict[AbilityType, ActiveAbility] = field(default_factory=dict)
     movement_remaining: int = 0
     has_moved_this_turn: bool = False
-    has_acted_this_turn: bool = False  # Each ship gets 1 action per turn
+    action_points: int = 0  # Current AP remaining this turn
     is_destroyed: bool = False
 
     def __post_init__(self):
         # Initialize abilities from config
         for ability_cfg in self.config.abilities:
             self.abilities[ability_cfg.ability_type] = ActiveAbility(ability_cfg)
+        # Initialize action points
+        self.action_points = self.config.max_action_points
 
     @property
     def center(self) -> Position:
@@ -291,11 +294,22 @@ class Ship:
             raise ValueError("Ship has no positions")
         return self.positions[len(self.positions) // 2]
 
+    def can_afford(self, cost: int) -> bool:
+        """Check if ship has enough action points."""
+        return self.action_points >= cost
+
+    def spend_ap(self, cost: int) -> bool:
+        """Spend action points. Returns True if successful."""
+        if not self.can_afford(cost):
+            return False
+        self.action_points -= cost
+        return True
+
     def reset_turn(self):
         """Reset ship for new turn."""
         self.movement_remaining = self.config.speed
         self.has_moved_this_turn = False
-        self.has_acted_this_turn = False
+        self.action_points = self.config.max_action_points
         for ability in self.abilities.values():
             ability.reset_turn()
 

@@ -20,7 +20,7 @@ class RandomBot(FleetBot):
     """
     A baseline bot that takes random actions.
 
-    Each ship gets 1 action per turn (move OR fire OR ability).
+    Uses AP system but only does one action per ship for simplicity.
     """
 
     def __init__(self):

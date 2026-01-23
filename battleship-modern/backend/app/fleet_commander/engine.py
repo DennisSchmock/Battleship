@@ -255,16 +255,7 @@ class FleetCommanderGame:
                 ))
                 continue
 
-            # Each ship can only act once per turn
-            if ship.has_acted_this_turn:
-                result.actions_taken.append(ActionResult(
-                    success=False,
-                    action=action,
-                    message="Ship has already acted this turn"
-                ))
-                continue
-
-            # Execute action
+            # Execute action (each action handler checks and deducts AP)
             if isinstance(action, MoveAction):
                 action_result = self._execute_move(ship, action, player)
             elif isinstance(action, FireAction):
@@ -282,10 +273,6 @@ class FleetCommanderGame:
                     message="Unknown action type"
                 )
 
-            # Mark ship as having acted if action was successful
-            if action_result.success:
-                ship.has_acted_this_turn = True
-
             result.actions_taken.append(action_result)
 
         # End turn processing
@@ -294,7 +281,7 @@ class FleetCommanderGame:
         return result
 
     def _execute_move(self, ship: Ship, action: MoveAction, player: PlayerState) -> ActionResult:
-        """Execute a move action."""
+        """Execute a move action. Costs 1 AP per cell moved."""
         if ship.has_moved_this_turn and any(
             ab.config.blocks_movement for ab in ship.abilities.values()
             if not ab.can_use  # Used this turn
@@ -304,6 +291,11 @@ class FleetCommanderGame:
         path = action.path
         if not path:
             return ActionResult(False, action, "Empty path")
+
+        # Check AP cost (1 AP per cell)
+        move_cost = len(path)
+        if not ship.can_afford(move_cost):
+            return ActionResult(False, action, f"Not enough AP ({ship.action_points}/{move_cost} needed)")
 
         # Validate path length
         if len(path) > ship.movement_remaining:
@@ -385,6 +377,7 @@ class FleetCommanderGame:
         ship.positions = new_positions
         ship.movement_remaining -= len(path)
         ship.has_moved_this_turn = True
+        ship.spend_ap(len(path))  # 1 AP per cell moved
 
         # Update occupied cells
         for pos in new_positions:
@@ -419,6 +412,11 @@ class FleetCommanderGame:
         if not ability.can_use:
             return ActionResult(False, action, f"Ability on cooldown ({ability.cooldown_remaining})")
 
+        # Check AP cost
+        ap_cost = ability.config.ap_cost
+        if not ship.can_afford(ap_cost):
+            return ActionResult(False, action, f"Not enough AP ({ship.action_points}/{ap_cost} needed)")
+
         # Check range
         if not ship.center.in_range(action.target, ability.config.range):
             return ActionResult(False, action, "Target out of range")
@@ -429,6 +427,7 @@ class FleetCommanderGame:
 
         # Execute based on ability type
         ability.use()
+        ship.spend_ap(ap_cost)
 
         ships_hit = []
         ships_destroyed = []
@@ -551,11 +550,17 @@ class FleetCommanderGame:
         if not ability.can_use:
             return ActionResult(False, action, f"Ability on cooldown")
 
+        # Check AP cost
+        ap_cost = ability.config.ap_cost
+        if not ship.can_afford(ap_cost):
+            return ActionResult(False, action, f"Not enough AP ({ship.action_points}/{ap_cost} needed)")
+
         # Check range
         if not ship.center.in_range(action.center, ability.config.range):
             return ActionResult(False, action, "Scan center out of range")
 
         ability.use()
+        ship.spend_ap(ap_cost)
 
         # Reveal cells in area
         radius = ability.config.area_size
@@ -629,6 +634,11 @@ class FleetCommanderGame:
         if not ability.can_use:
             return ActionResult(False, action, "Ability on cooldown")
 
+        # Check AP cost
+        ap_cost = ability.config.ap_cost
+        if not ship.can_afford(ap_cost):
+            return ActionResult(False, action, f"Not enough AP ({ship.action_points}/{ap_cost} needed)")
+
         if ability_type == AbilityType.REPAIR:
             # Find target ship
             target_ship = self._get_ship_by_id(action.target_ship_id) if action.target_ship_id else None
@@ -641,12 +651,14 @@ class FleetCommanderGame:
             heal_amount = min(1, target_ship.config.max_hp - target_ship.hp)
             target_ship.hp += heal_amount
             ability.use()
+            ship.spend_ap(ap_cost)
 
             return ActionResult(success=True, action=action, damage_dealt=-heal_amount)
 
         elif ability_type == AbilityType.JAM:
             # Jamming is passive - just mark that we used it
             ability.use()
+            ship.spend_ap(ap_cost)
             # In a real implementation, this would affect enemy scans
             return ActionResult(success=True, action=action)
 
@@ -663,6 +675,7 @@ class FleetCommanderGame:
             )
             player.decoys.append(decoy)
             ability.use()
+            ship.spend_ap(ap_cost)
 
             return ActionResult(success=True, action=action)
 
@@ -682,6 +695,7 @@ class FleetCommanderGame:
             )
             player.mines.append(mine)
             ability.use()
+            ship.spend_ap(ap_cost)
 
             return ActionResult(success=True, action=action)
 
@@ -698,6 +712,7 @@ class FleetCommanderGame:
             )
             player.sensors.append(sensor)
             ability.use()
+            ship.spend_ap(ap_cost)
 
             return ActionResult(success=True, action=action)
 
@@ -709,21 +724,27 @@ class FleetCommanderGame:
             )
             player.drones.append(drone)
             ability.use()
+            ship.spend_ap(ap_cost)
 
             return ActionResult(success=True, action=action)
 
         return ActionResult(False, action, "Unknown ability")
 
     def _execute_lock_on(self, ship: Ship, action: LockOnAction, player: PlayerState) -> ActionResult:
-        """Lock on to a target for precision strike."""
+        """Lock on to a target for precision strike. Costs 1 AP."""
         if AbilityType.PRECISION_STRIKE not in ship.abilities:
             return ActionResult(False, action, "Ship can't lock on")
+
+        # Check AP cost (1 AP to lock on)
+        if not ship.can_afford(1):
+            return ActionResult(False, action, f"Not enough AP ({ship.action_points}/1 needed)")
 
         ability = ship.abilities[AbilityType.PRECISION_STRIKE]
         if not ship.center.in_range(action.target, ability.config.range):
             return ActionResult(False, action, "Target out of range")
 
         ability.locked_target = action.target
+        ship.spend_ap(1)
 
         return ActionResult(success=True, action=action)
 

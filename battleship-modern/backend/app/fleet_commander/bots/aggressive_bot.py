@@ -1,7 +1,7 @@
 """AggressiveBot - Offensive-focused bot for Fleet Commander.
 
 Prioritizes attacking over everything else.
-Each ship gets 1 action per turn.
+Uses the AP system to move AND fire in the same turn when possible.
 """
 import random
 from typing import List, Tuple, Optional, Set
@@ -22,9 +22,9 @@ class AggressiveBot(FleetBot):
     An aggressive bot that prioritizes attacking.
 
     Strategy:
-    1. If enemy in range -> FIRE
-    2. If not in range -> MOVE toward enemy
-    3. Use special abilities when available
+    1. If enemy in range -> FIRE (use best affordable ability)
+    2. If not in range but can afford move+fire -> MOVE then FIRE
+    3. If can only move -> MOVE toward enemy
     """
 
     def __init__(self):
@@ -64,46 +64,154 @@ class AggressiveBot(FleetBot):
         )
 
         for ship in ships_to_act:
-            action = self._get_ship_action(ship, view, enemy_positions)
-            if action:
-                actions.append(action)
+            ship_actions = self._get_ship_actions(ship, view, enemy_positions)
+            actions.extend(ship_actions)
 
         return actions
 
-    def _get_ship_action(self, ship: VisibleShip, view: GameView,
-                         enemy_positions: List[Position]) -> Optional[Action]:
-        """Decide action for a single ship."""
+    def _get_ship_actions(self, ship: VisibleShip, view: GameView,
+                          enemy_positions: List[Position]) -> List[Action]:
+        """Decide all actions for a single ship (can be multiple with AP system)."""
+        actions = []
 
-        # Priority 1: Use area bombardment if available and enemies are clustered
-        if ship.ability_info and AbilityType.AREA_BOMBARDMENT in ship.ability_info:
-            if ship.ability_info[AbilityType.AREA_BOMBARDMENT].can_use:
-                bomb_range = ship.ability_info[AbilityType.AREA_BOMBARDMENT].range
-                target = self._find_bombardment_target(ship.center, enemy_positions, bomb_range)
-                if target:
-                    return FireAction(ship_id=ship.id, target=target,
-                                     ability=AbilityType.AREA_BOMBARDMENT)
+        # Track remaining AP for planning (actual deduction happens in engine)
+        remaining_ap = ship.action_points
+        current_pos = ship.center
 
-        # Priority 2: Use burst fire on nearby enemies
-        if ship.ability_info and AbilityType.BURST_FIRE in ship.ability_info:
-            if ship.ability_info[AbilityType.BURST_FIRE].can_use:
-                burst_range = ship.ability_info[AbilityType.BURST_FIRE].range
-                target = self._find_closest_target(ship.center, enemy_positions, burst_range)
-                if target:
-                    return FireAction(ship_id=ship.id, target=target,
-                                     ability=AbilityType.BURST_FIRE)
+        # First, try to fire if enemies are in range
+        fire_action, fire_cost = self._get_best_fire_action(ship, current_pos, enemy_positions, remaining_ap)
 
-        # Priority 3: Regular fire at enemies in range
-        if ship.can_fire() and enemy_positions:
-            fire_range = ship.get_fire_range()
-            target = self._find_closest_target(ship.center, enemy_positions, fire_range)
+        if fire_action:
+            actions.append(fire_action)
+            remaining_ap -= fire_cost
+        else:
+            # No enemy in range - try to move toward them then fire
+            move_steps, fire_ability, fire_cost = self._plan_move_and_fire(
+                ship, current_pos, enemy_positions, remaining_ap, view
+            )
+
+            if move_steps > 0:
+                # Create move action
+                path = self._create_path_toward_enemies(ship, current_pos, enemy_positions, move_steps, view)
+                if path:
+                    actions.append(MoveAction(ship_id=ship.id, path=path))
+                    remaining_ap -= len(path)
+                    current_pos = path[-1]
+
+                    # Now try to fire from new position
+                    if fire_ability and remaining_ap >= fire_cost:
+                        target = self._find_closest_target(current_pos, enemy_positions,
+                                                          ship.ability_info[fire_ability].range)
+                        if target:
+                            actions.append(FireAction(ship_id=ship.id, target=target, ability=fire_ability))
+                            remaining_ap -= fire_cost
+
+            # If we still have AP and couldn't reach firing range, just advance
+            if remaining_ap > 0 and not actions:
+                advance = self._get_advance_move(ship, view, enemy_positions, remaining_ap)
+                if advance:
+                    actions.append(advance)
+
+        return actions
+
+    def _get_best_fire_action(self, ship: VisibleShip, from_pos: Position,
+                               enemies: List[Position], max_ap: int
+                               ) -> Tuple[Optional[Action], int]:
+        """Get the best fire action the ship can afford from current position."""
+        if not ship.ability_info:
+            return None, 0
+
+        # Priority order: area attacks, burst fire, regular fire
+        priority = [
+            AbilityType.AREA_BOMBARDMENT,
+            AbilityType.BURST_FIRE,
+            AbilityType.PIERCING_SHOT,
+            AbilityType.FIRE,
+        ]
+
+        for ab_type in priority:
+            if ab_type not in ship.ability_info:
+                continue
+            info = ship.ability_info[ab_type]
+            if not info.can_use or info.ap_cost > max_ap:
+                continue
+
+            # Find target in range
+            if ab_type == AbilityType.AREA_BOMBARDMENT:
+                target = self._find_bombardment_target(from_pos, enemies, info.range)
+            else:
+                target = self._find_closest_target(from_pos, enemies, info.range)
+
             if target:
-                return FireAction(ship_id=ship.id, target=target)
+                return FireAction(ship_id=ship.id, target=target, ability=ab_type), info.ap_cost
 
-        # Priority 4: Move toward enemies
-        if ship.can_move():
-            return self._get_advance_move(ship, view, enemy_positions)
+        return None, 0
 
-        return None
+    def _plan_move_and_fire(self, ship: VisibleShip, from_pos: Position,
+                            enemies: List[Position], max_ap: int, view: GameView
+                            ) -> Tuple[int, Optional[AbilityType], int]:
+        """Plan how many steps to move and which ability to use."""
+        if not enemies or not ship.ability_info:
+            return 0, None, 0
+
+        # Find closest enemy
+        closest_enemy = min(enemies, key=lambda e: from_pos.distance_to(e))
+        dist_to_enemy = from_pos.distance_to(closest_enemy)
+
+        # Try each fire ability and see if we can reach firing range
+        for ab_type in [AbilityType.FIRE, AbilityType.BURST_FIRE, AbilityType.PIERCING_SHOT]:
+            if ab_type not in ship.ability_info:
+                continue
+            info = ship.ability_info[ab_type]
+            if not info.can_use:
+                continue
+
+            fire_range = info.range
+            fire_cost = info.ap_cost
+
+            # How many steps to get in range?
+            steps_needed = max(0, dist_to_enemy - fire_range)
+
+            # Can we afford move + fire?
+            total_cost = steps_needed + fire_cost
+            if total_cost <= max_ap and steps_needed <= (ship.movement_remaining or 0):
+                return steps_needed, ab_type, fire_cost
+
+        return 0, None, 0
+
+    def _create_path_toward_enemies(self, ship: VisibleShip, from_pos: Position,
+                                     enemies: List[Position], steps: int, view: GameView
+                                     ) -> List[Position]:
+        """Create a path of 'steps' moves toward the closest enemy."""
+        if not enemies or steps <= 0:
+            return []
+
+        target = min(enemies, key=lambda e: from_pos.distance_to(e))
+        path = []
+        current = from_pos
+
+        for _ in range(steps):
+            best_dir = None
+            best_dist = current.distance_to(target)
+
+            for direction in Direction:
+                new_pos = current.move(direction)
+                if not view.is_valid_position(new_pos):
+                    continue
+                if view.is_in_storm(new_pos):
+                    continue
+                dist = new_pos.distance_to(target)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_dir = direction
+
+            if best_dir:
+                current = current.move(best_dir)
+                path.append(current)
+            else:
+                break
+
+        return path
 
     def _find_bombardment_target(self, ship_pos: Position, enemies: List[Position],
                                   bomb_range: int) -> Optional[Position]:
@@ -136,30 +244,44 @@ class AggressiveBot(FleetBot):
         return best_target
 
     def _get_advance_move(self, ship: VisibleShip, view: GameView,
-                          enemies: List[Position]) -> Optional[MoveAction]:
-        """Move toward enemies or enemy side."""
+                          enemies: List[Position], max_steps: int) -> Optional[MoveAction]:
+        """Move toward enemies using up to max_steps."""
         if enemies:
             target = min(enemies, key=lambda e: ship.center.distance_to(e))
         else:
             target = Position(self.enemy_side_x, view.grid_size[1] // 2, view.grid_size[2] // 2)
 
-        best_dir = None
-        best_dist = ship.center.distance_to(target)
+        # Determine how many steps to take (limited by movement and AP)
+        steps = min(max_steps, ship.movement_remaining or 0)
+        if steps <= 0:
+            return None
 
-        for direction in Direction:
-            new_pos = ship.center.move(direction)
-            if not view.is_valid_position(new_pos):
-                continue
-            if view.is_in_storm(new_pos):
-                continue
-            dist = new_pos.distance_to(target)
-            if dist < best_dist:
-                best_dist = dist
-                best_dir = direction
+        path = []
+        current = ship.center
 
-        if best_dir:
-            return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
+        for _ in range(steps):
+            best_dir = None
+            best_dist = current.distance_to(target)
 
+            for direction in Direction:
+                new_pos = current.move(direction)
+                if not view.is_valid_position(new_pos):
+                    continue
+                if view.is_in_storm(new_pos):
+                    continue
+                dist = new_pos.distance_to(target)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_dir = direction
+
+            if best_dir:
+                current = current.move(best_dir)
+                path.append(current)
+            else:
+                break
+
+        if path:
+            return MoveAction(ship_id=ship.id, path=path)
         return None
 
     def on_turn_result(self, result: TurnResult) -> None:

@@ -25,6 +25,7 @@ class AbilityInfo:
     area_size: int  # Radius for area effects (0 = single target)
     uses_per_turn: int  # How many times can use per turn
     blocks_movement: bool  # Can't move if using this
+    ap_cost: int = 1  # Action points cost to use this ability
 
 
 @dataclass
@@ -39,36 +40,48 @@ class VisibleShip:
     max_hp: Optional[int] = None
     speed: Optional[int] = None
     movement_remaining: Optional[int] = None
-    has_acted: bool = False  # Has this ship acted this turn?
+    action_points: int = 0  # Current AP remaining this turn
+    max_action_points: int = 0  # Maximum AP per turn
+    has_acted: bool = False  # Legacy: True if AP == 0
     abilities: Optional[Dict[AbilityType, bool]] = None  # ability -> can_use (legacy)
     ability_info: Optional[Dict[AbilityType, AbilityInfo]] = None  # Full ability details
 
     def can_act(self) -> bool:
-        """Check if this ship can still act this turn."""
-        return not self.has_acted and self.hp is not None and self.hp > 0
+        """Check if this ship can still act this turn (has AP remaining)."""
+        return self.action_points > 0 and self.hp is not None and self.hp > 0
+
+    def can_afford(self, cost: int) -> bool:
+        """Check if ship has enough AP for an action."""
+        return self.action_points >= cost
 
     def can_fire(self) -> bool:
-        """Check if this ship can fire this turn."""
+        """Check if this ship can fire this turn (has ability and can afford it)."""
         if not self.ability_info:
             return False
         for ab_type in [AbilityType.FIRE, AbilityType.BURST_FIRE, AbilityType.AREA_BOMBARDMENT,
                         AbilityType.PRECISION_STRIKE, AbilityType.PIERCING_SHOT]:
-            if ab_type in self.ability_info and self.ability_info[ab_type].can_use:
-                return True
+            if ab_type in self.ability_info:
+                info = self.ability_info[ab_type]
+                if info.can_use and self.can_afford(info.ap_cost):
+                    return True
         return False
 
     def can_scan(self) -> bool:
-        """Check if this ship can scan this turn."""
+        """Check if this ship can scan this turn (has ability and can afford it)."""
         if not self.ability_info:
             return False
         for ab_type in [AbilityType.SCAN, AbilityType.LONG_RANGE_SCAN, AbilityType.ANTI_STEALTH_SCAN]:
-            if ab_type in self.ability_info and self.ability_info[ab_type].can_use:
-                return True
+            if ab_type in self.ability_info:
+                info = self.ability_info[ab_type]
+                if info.can_use and self.can_afford(info.ap_cost):
+                    return True
         return False
 
-    def can_move(self) -> bool:
-        """Check if this ship can move this turn."""
-        return self.movement_remaining is not None and self.movement_remaining > 0
+    def can_move(self, distance: int = 1) -> bool:
+        """Check if this ship can move at least 'distance' cells (has movement and AP)."""
+        return (self.movement_remaining is not None and
+                self.movement_remaining >= distance and
+                self.can_afford(distance))
 
     def get_fire_range(self) -> int:
         """Get the maximum fire range of this ship."""
@@ -92,7 +105,7 @@ class VisibleShip:
         return max_range
 
     def get_best_fire_ability(self) -> Optional[AbilityType]:
-        """Get the best available fire ability (highest damage that can be used)."""
+        """Get the best available fire ability (highest damage that can be used and afforded)."""
         if not self.ability_info:
             return None
         best = None
@@ -101,10 +114,23 @@ class VisibleShip:
                         AbilityType.PRECISION_STRIKE, AbilityType.PIERCING_SHOT]:
             if ab_type in self.ability_info:
                 info = self.ability_info[ab_type]
-                if info.can_use and info.damage > best_damage:
+                if info.can_use and self.can_afford(info.ap_cost) and info.damage > best_damage:
                     best_damage = info.damage
                     best = ab_type
         return best
+
+    def get_affordable_fire_abilities(self) -> List[Tuple[AbilityType, AbilityInfo]]:
+        """Get all fire abilities that can be used and afforded."""
+        if not self.ability_info:
+            return []
+        result = []
+        for ab_type in [AbilityType.FIRE, AbilityType.BURST_FIRE, AbilityType.AREA_BOMBARDMENT,
+                        AbilityType.PRECISION_STRIKE, AbilityType.PIERCING_SHOT]:
+            if ab_type in self.ability_info:
+                info = self.ability_info[ab_type]
+                if info.can_use and self.can_afford(info.ap_cost):
+                    result.append((ab_type, info))
+        return result
 
     @property
     def center(self) -> Position:
@@ -119,7 +145,8 @@ class GameView:
     my_player_id: int
     grid_size: Tuple[int, int, int]
 
-    # Ships - each ship gets 1 action per turn
+    # Ships - each ship has action points (AP) per turn
+    # Move costs 1 AP per cell, abilities cost varies (see ability_info.ap_cost)
     my_ships: List[VisibleShip]
     visible_enemy_ships: List[VisibleShip]
 
@@ -420,6 +447,7 @@ def create_game_view(state_dict: dict) -> GameView:
                         area_size=ab_config.area_size,
                         uses_per_turn=ab_config.uses_per_turn,
                         blocks_movement=ab_config.blocks_movement,
+                        ap_cost=ab_config.ap_cost,
                     )
             except ValueError:
                 pass
@@ -433,7 +461,9 @@ def create_game_view(state_dict: dict) -> GameView:
             max_hp=s["max_hp"],
             speed=s["speed"],
             movement_remaining=s["movement_remaining"],
-            has_acted=s.get("has_acted", False),
+            action_points=s.get("action_points", 0),
+            max_action_points=ship_config.max_action_points,
+            has_acted=s.get("action_points", 0) == 0,  # Legacy: no AP = has acted
             abilities=abilities,
             ability_info=ability_info
         ))

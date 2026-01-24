@@ -339,7 +339,9 @@ class Ship:
             "max_hp": self.config.max_hp,
             "speed": self.config.speed,
             "movement_remaining": self.movement_remaining,
-            "has_acted": self.has_acted_this_turn,
+            "action_points": self.action_points,
+            "max_action_points": self.config.max_action_points,
+            "has_acted": self.action_points == 0,  # Legacy: true if no AP left
             "is_destroyed": self.is_destroyed,
             "abilities": {
                 k.value: {"can_use": v.can_use, "cooldown": v.cooldown_remaining}

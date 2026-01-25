@@ -75,25 +75,9 @@ test-bot:
 
 # Run a quick tournament with 4 internal bots
 test-tournament:
-	@echo "Running quick tournament with 4 bots..."
 	@echo "Make sure backend is running (make run-backend)"
 	@echo ""
-	@TID=$$(curl -s -X POST http://localhost:8000/api/fleet-commander/tournaments \
-		-H "Content-Type: application/json" \
-		-d '{"name":"Quick Test","include_bots":["tactical","aggressive","defensive","random"]}' \
-		| python3 -c "import sys,json; print(json.load(sys.stdin)['tournament']['id'])") && \
-	echo "Created tournament: $$TID" && \
-	curl -s -X POST "http://localhost:8000/api/fleet-commander/tournaments/$$TID/run" > /dev/null && \
-	echo "Tournament running! Waiting for completion..." && \
-	sleep 10 && \
-	curl -s "http://localhost:8000/api/fleet-commander/tournaments/$$TID" | python3 -c "\
-import sys,json; \
-t=json.load(sys.stdin)['tournament']; \
-print(f\"\nTournament: {t['name']} ({t['state']})\"); \
-print('Standings:'); \
-for i,s in enumerate(t['standings']): \
-    p=next((p for p in t['participants'] if p['id']==s['participant_id']),{}); \
-    print(f\"  {i+1}. {p.get('name','?')}: {s['wins']}W-{s['losses']}L ({s['points']}pts)\")"
+	python3 scripts/run_tournament.py
 
 # Train RL agent
 train:

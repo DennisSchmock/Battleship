@@ -1582,9 +1582,9 @@ async def run_tournament(tournament_id: str):
     if tournament.state == TournamentState.IN_PROGRESS:
         raise HTTPException(status_code=400, detail="Tournament already running")
 
-    if tournament.state != TournamentState.LOBBY:
+    if tournament.state == TournamentState.LOBBY:
         if not tournament.can_start():
-            raise HTTPException(status_code=400, detail="Cannot start tournament")
+            raise HTTPException(status_code=400, detail="Cannot start tournament. Need at least 2 ready participants.")
         tournament.start()
 
     # Run tournament in background

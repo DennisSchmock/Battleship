@@ -283,11 +283,10 @@ function AnimatedShip({
 // Storm boundary visualization
 function StormBoundary({
   storm,
-  gridSize,
   offset,
 }: {
   storm: StormData;
-  gridSize: [number, number, number];
+  gridSize?: [number, number, number];
   offset: [number, number, number];
 }) {
   const meshRef = useRef<THREE.Mesh>(null);
@@ -601,12 +600,10 @@ function ScanWave({
 // Grid with fog of war
 function GridWithFog({
   gridSize,
-  knownCells,
-  offset,
 }: {
   gridSize: [number, number, number];
   knownCells?: Set<string>;
-  offset: [number, number, number];
+  offset?: [number, number, number];
 }) {
   const [x, y, z] = gridSize;
 
@@ -907,7 +904,7 @@ const DEFAULT_BOTS: BotType[] = [
 ];
 
 export function FleetCommander3DView() {
-  const [wsConnected, setWsConnected] = useState(false);
+  const [_wsConnected, setWsConnected] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [currentTurn, setCurrentTurn] = useState<TurnData | null>(null);
   const [player1Name, setPlayer1Name] = useState('Player 1');
@@ -928,7 +925,7 @@ export function FleetCommander3DView() {
 
   // Current turn actions
   const [currentActions, setCurrentActions] = useState<ActionInfo[]>([]);
-  const [actionPoints, setActionPoints] = useState({ p1: 0, p2: 0 });
+  const [_actionPoints, setActionPoints] = useState({ p1: 0, p2: 0 });
 
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -1337,7 +1334,7 @@ export function FleetCommander3DView() {
                 <div key={i} className={`action-item ${action.type} ${action.ships_hit && action.ships_hit.length > 0 ? 'hit' : ''}`}>
                   <span className="action-type">{action.type.toUpperCase()}</span>
                   <span className="action-ship">{action.ship_id.split('_')[0]}</span>
-                  {action.damage > 0 && <span className="action-damage">-{action.damage} HP</span>}
+                  {(action.damage ?? 0) > 0 && <span className="action-damage">-{action.damage} HP</span>}
                   {action.ships_destroyed && action.ships_destroyed.length > 0 && (
                     <span className="action-destroyed">DESTROYED!</span>
                   )}

@@ -7,9 +7,10 @@ import { SpaceGameView } from './components/SpaceGameView'
 import { MatchView } from './components/MatchView'
 import { StrategicGameView } from './components/StrategicGameView'
 import { FleetCommander3DView } from './components/FleetCommander3DView'
+import { FleetCommanderTournament } from './components/FleetCommanderTournament'
 import './App.css'
 
-type View = 'home' | 'tournament-setup' | 'tournament' | 'game' | 'space-game' | 'match' | 'strategic' | 'fleet-commander'
+type View = 'home' | 'tournament-setup' | 'tournament' | 'game' | 'space-game' | 'match' | 'strategic' | 'fleet-commander' | 'fleet-tournament'
 
 function App() {
   const [view, setView] = useState<View>('home')
@@ -63,6 +64,12 @@ function App() {
           >
             Fleet Commander
           </button>
+          <button
+            className={view === 'fleet-tournament' ? 'active' : ''}
+            onClick={() => setView('fleet-tournament')}
+          >
+            Tournament
+          </button>
         </nav>
       </header>
 
@@ -72,6 +79,7 @@ function App() {
         {view === 'space-game' && <SpaceGameView />}
         {view === 'strategic' && <StrategicGameView />}
         {view === 'fleet-commander' && <FleetCommander3DView />}
+        {view === 'fleet-tournament' && <FleetCommanderTournament />}
         {view === 'game' && <GameView />}
         {view === 'tournament-setup' && (
           <TournamentSetup onStart={handleStartTournament} />

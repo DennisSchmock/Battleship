@@ -101,7 +101,7 @@ class SimpleBot:
         view = data["view"]
         self.my_player_id = view.get("my_player_id")
         turn = view.get("turn", 0)
-        my_ships = view.get("my_ships", [])
+        my_ships = [s for s in view.get("my_ships", []) if s.get("hp", 0) > 0]
         enemies = view.get("visible_enemy_ships", [])
 
         print(f"\n=== Turn {turn} ===")

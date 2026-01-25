@@ -64,7 +64,7 @@ test-bot:
 	@echo "Testing WebSocket bot against $(OPPONENT) bot..."
 	@echo "Make sure backend is running (make run-backend)"
 	@echo ""
-	cd example_bot && python simple_bot.py --server ws://localhost:8000 --opponent $(OPPONENT)
+	cd example_bot && python3 simple_bot.py --server ws://localhost:8000 --opponent $(OPPONENT)
 
 # Train RL agent
 train:

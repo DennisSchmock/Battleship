@@ -3,12 +3,33 @@
 Allows external systems to connect and play as bots via WebSocket.
 This enables bots written in any language, LLMs, or external AI systems.
 
-Protocol:
+RULES ENDPOINT: GET /api/fleet-commander/rules
+    Returns complete game rules, ship stats, and ability costs as JSON.
+
+ACTION POINTS (AP) SYSTEM:
+==========================
+Each ship has its own AP pool per turn based on ship size:
+- Minelayer (2 cells): 4 AP
+- Destroyer (3 cells): 3 AP
+- Artillery (3 cells): 3 AP
+- Support (3 cells): 3 AP
+- Cruiser (4 cells): 2 AP
+- Carrier (5 cells): 2 AP
+
+COSTS:
+- Movement: 1 AP per cell
+- Standard fire: 1 AP
+- Strong abilities: 2 AP (burst fire, piercing shot, area bombardment, mines)
+- Precision strike: 3 AP
+
+Ships can perform MULTIPLE actions per turn if they have enough AP!
+Example: Destroyer (3 AP) can move 2 cells (2 AP) + fire (1 AP) = 3 AP total
+
+PROTOCOL:
 =========
 
 1. Connection
-   - Connect to: ws://host:port/fleet-commander/bot/{game_id}/{player_id}
-   - Authenticate with: {"type": "auth", "token": "your-token"}
+   Connect to: ws://host:port/ws/fleet-commander?player1_type=websocket&player2_type=aggressive
 
 2. Server -> Client Messages:
 
@@ -34,10 +55,29 @@ Protocol:
        "type": "get_actions",
        "view": {
            "turn": 5,
-           "my_ships": [...],  // Each ship has has_acted flag
+           "my_ships": [
+               {
+                   "id": "ship_1",
+                   "ship_type": "destroyer",
+                   "positions": [[5, 10, 3], [5, 11, 3], [5, 12, 3]],
+                   "hp": 4,
+                   "max_hp": 4,
+                   "action_points": 3,      // Current AP remaining
+                   "max_action_points": 3,  // Max AP per turn
+                   "movement_remaining": 2,
+                   "can_act": true,
+                   "can_fire": true,
+                   "can_move": true,
+                   "fire_range": 4,
+                   "abilities": {
+                       "fire": {"can_use": true, "ap_cost": 1, "range": 4, "damage": 1},
+                       "burst_fire": {"can_use": true, "ap_cost": 2, "range": 4, "damage": 1}
+                   }
+               },
+               ...
+           ],
            "visible_enemy_ships": [...],
-           "known_cells": {...},
-           "storm": {...},
+           "storm": {"min": [4, 4, 2], "max": [28, 28, 14], "damage": 1},
            ...
        }
    }
@@ -56,13 +96,7 @@ Protocol:
    {
        "type": "game_end",
        "won": true,
-       "final_view": {...}
-   }
-
-   error:
-   {
-       "type": "error",
-       "message": "Description of error"
+       "reason": "All enemy ships destroyed"
    }
 
 3. Client -> Server Messages:
@@ -72,22 +106,25 @@ Protocol:
        "type": "fleet_placement",
        "placements": [
            {"ship_type": "destroyer", "position": [5, 10, 3], "direction": "north"},
+           {"ship_type": "cruiser", "position": [3, 15, 5], "direction": "east"},
            ...
        ]
    }
 
-   actions:
+   actions (can include MULTIPLE actions per ship if AP allows):
    {
        "type": "actions",
        "actions": [
-           {"action_type": "move", "ship_id": "ship_1", "path": [[5, 11, 3]]},
-           {"action_type": "fire", "ship_id": "ship_2", "target": [15, 10, 5]},
+           {"action_type": "move", "ship_id": "ship_1", "path": [[6, 10, 3], [7, 10, 3]]},
+           {"action_type": "fire", "ship_id": "ship_1", "target": [15, 10, 5]},
+           {"action_type": "fire", "ship_id": "ship_2", "target": [15, 10, 5], "ability": "burst_fire"},
            {"action_type": "ability", "ship_id": "ship_4", "ability": "deploy_mine", "target": [6, 10, 3]},
            ...
        ]
    }
 
-Note: Each ship gets 1 action per turn. Ships that have already acted (has_acted=true) cannot act again until the next turn.
+DIRECTIONS: north, south, east, west, up, down
+SHIP TYPES: destroyer, cruiser, support, carrier, artillery, minelayer
 """
 import json
 import asyncio

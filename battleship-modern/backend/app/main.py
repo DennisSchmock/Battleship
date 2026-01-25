@@ -709,6 +709,100 @@ async def get_fleet_bot_types():
     }
 
 
+@app.get("/api/fleet-commander/rules")
+async def get_fleet_commander_rules():
+    """Get complete game rules for Fleet Commander.
+
+    This endpoint provides all game mechanics, ship stats, and ability costs
+    for external AI/bots to understand the game.
+    """
+    from app.fleet_commander.models import SHIP_CONFIGS, ShipType, AbilityType
+
+    # Build ship info from configs
+    ships = {}
+    for ship_type, config in SHIP_CONFIGS.items():
+        if ship_type == ShipType.SCOUT:  # Scout is removed
+            continue
+        abilities = {}
+        for ab in config.abilities:
+            abilities[ab.ability_type.value] = {
+                "range": ab.range,
+                "damage": ab.damage,
+                "ap_cost": ab.ap_cost,
+                "cooldown": ab.cooldown,
+                "area_size": ab.area_size,
+                "blocks_movement": ab.blocks_movement,
+            }
+        ships[ship_type.value] = {
+            "name": config.name,
+            "size": config.size,
+            "max_hp": config.max_hp,
+            "speed": config.speed,
+            "max_action_points": config.max_action_points,
+            "abilities": abilities,
+        }
+
+    return {
+        "game_name": "Fleet Commander",
+        "version": "2.0",
+
+        "overview": {
+            "description": "3D space fleet combat game. Destroy all enemy ships to win.",
+            "grid_size": [32, 32, 16],
+            "players": 2,
+            "turn_based": True,
+        },
+
+        "action_points": {
+            "description": "Each ship has its own Action Points (AP) per turn. Smaller ships have more AP.",
+            "movement_cost": "1 AP per cell moved",
+            "ability_costs": "Varies by ability (see ship abilities)",
+            "reset": "All ships reset to max AP at start of each turn",
+        },
+
+        "ships": ships,
+
+        "fleet_composition": [
+            {"type": "destroyer", "count": 2},
+            {"type": "cruiser", "count": 1},
+            {"type": "support", "count": 1},
+            {"type": "carrier", "count": 1},
+            {"type": "artillery", "count": 1},
+            {"type": "minelayer", "count": 1},
+        ],
+
+        "storm": {
+            "description": "The battlefield shrinks over time. Ships outside safe zone take damage.",
+            "start_turn": 20,
+            "shrink_interval": 5,
+            "damage_per_turn": 1,
+        },
+
+        "victory_conditions": [
+            "Destroy all enemy ships",
+            "Have more ships when max turns reached",
+            "Storm eliminates opponent's fleet",
+        ],
+
+        "websocket_protocol": {
+            "connect": "ws://host:port/ws/fleet-commander?player1_type=websocket&player2_type=aggressive",
+            "messages": {
+                "server_to_client": [
+                    "game_start - Game configuration",
+                    "place_fleet - Request fleet placement",
+                    "get_actions - Request actions for your turn",
+                    "turn_result - Result of actions taken",
+                    "game_end - Game over with winner",
+                ],
+                "client_to_server": [
+                    "fleet_placement - Your ship positions",
+                    "actions - List of actions for this turn",
+                ],
+            },
+        },
+    }
+
+
 @app.get("/api/fleet-commander/replays")
 async def list_replays():
     """List available game replays."""

@@ -346,10 +346,12 @@ function MatchList({
   matches,
   participants,
   currentMatchId,
+  tournamentCompleted,
 }: {
   matches: Match[];
   participants: Participant[];
   currentMatchId?: string;
+  tournamentCompleted: boolean;
 }) {
   const getParticipantName = (id: string) => {
     return participants.find((p) => p.id === id)?.name || 'Unknown';
@@ -358,7 +360,7 @@ function MatchList({
   return (
     <div className="match-list">
       {matches.map((match) => {
-        const isCurrent = match.id === currentMatchId;
+        const isCurrent = match.id === currentMatchId && !tournamentCompleted;
         const isCompleted = match.state === 'completed';
         const winnerId = match.result?.winner_id;
 
@@ -416,18 +418,33 @@ function TournamentDetail({
 
   useEffect(() => {
     loadTournament();
+  }, [loadTournament]);
 
-    // Poll for updates when tournament is in progress
-    pollRef.current = window.setInterval(() => {
-      loadTournament();
-    }, 2000);
+  // Poll for updates only when tournament is in progress
+  useEffect(() => {
+    // Stop polling if tournament is completed or cancelled
+    if (tournament?.state === 'completed' || tournament?.state === 'cancelled') {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+      return;
+    }
+
+    // Start polling if not already polling
+    if (!pollRef.current) {
+      pollRef.current = window.setInterval(() => {
+        loadTournament();
+      }, 2000);
+    }
 
     return () => {
       if (pollRef.current) {
         clearInterval(pollRef.current);
+        pollRef.current = null;
       }
     };
-  }, [loadTournament]);
+  }, [tournament?.state, loadTournament]);
 
   const handleRun = async () => {
     if (!tournament) return;
@@ -497,6 +514,7 @@ function TournamentDetail({
               matches={tournament.matches}
               participants={tournament.participants}
               currentMatchId={tournament.current_match?.id}
+              tournamentCompleted={isCompleted}
             />
           </section>
         </div>

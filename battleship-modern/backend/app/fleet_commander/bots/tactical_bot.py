@@ -1,7 +1,7 @@
 """TacticalBot - A strategic bot for Fleet Commander.
 
 Uses different strategies based on ship type.
-Each ship gets 1 action per turn.
+Uses AP system to combine move + attack when beneficial.
 """
 import random
 from typing import List, Tuple, Optional, Set, Dict
@@ -21,11 +21,11 @@ class TacticalBot(FleetBot):
     """
     A bot that uses different tactics for each ship type:
 
-    - Destroyers: Hunt with burst fire
+    - Destroyers: Hunt with burst fire, move+fire combos
     - Cruisers: Area bombardment when enemies cluster
-    - Artillery: Long-range precision strikes
-    - Support: Repair damaged allies
-    - Minelayers: Deploy mines in enemy paths
+    - Artillery: Long-range precision strikes (stay back)
+    - Support: Repair damaged allies, move+heal combos
+    - Minelayers: Deploy mines then retreat
     - Carrier: Launch drones, stay back
     """
 
@@ -55,148 +55,288 @@ class TacticalBot(FleetBot):
 
         # Process each ship that can act
         for ship in view.get_ships_that_can_act():
-            action = self._get_ship_action(ship, view, enemy_positions)
-            if action:
-                actions.append(action)
+            ship_actions = self._get_ship_actions(ship, view, enemy_positions)
+            actions.extend(ship_actions)
 
         return actions
 
-    def _get_ship_action(self, ship: VisibleShip, view: GameView,
-                         enemy_positions: List[Position]) -> Optional[Action]:
-        """Get action based on ship type."""
+    def _get_ship_actions(self, ship: VisibleShip, view: GameView,
+                          enemy_positions: List[Position]) -> List[Action]:
+        """Get all actions for a ship based on its type and AP."""
+        actions = []
+        remaining_ap = ship.action_points
 
         # First: Escape storm if in danger
         if any(view.is_in_storm(p) for p in ship.positions):
-            return self._get_storm_escape_move(ship, view)
+            move = self._get_storm_escape_move(ship, view, remaining_ap)
+            if move:
+                actions.append(move)
+            return actions
 
         # Type-specific tactics
         if ship.ship_type == ShipType.SUPPORT:
-            return self._support_action(ship, view)
+            return self._support_actions(ship, view, remaining_ap)
         elif ship.ship_type == ShipType.MINELAYER:
-            return self._minelayer_action(ship, view, enemy_positions)
+            return self._minelayer_actions(ship, view, enemy_positions, remaining_ap)
         elif ship.ship_type == ShipType.ARTILLERY:
-            return self._artillery_action(ship, view, enemy_positions)
+            return self._artillery_actions(ship, view, enemy_positions, remaining_ap)
         elif ship.ship_type == ShipType.CARRIER:
-            return self._carrier_action(ship, view, enemy_positions)
+            return self._carrier_actions(ship, view, enemy_positions, remaining_ap)
         else:
             # Combat ships (Destroyer, Cruiser)
-            return self._combat_action(ship, view, enemy_positions)
+            return self._combat_actions(ship, view, enemy_positions, remaining_ap)
 
-    def _support_action(self, ship: VisibleShip, view: GameView) -> Optional[Action]:
-        """Support ships repair damaged allies."""
-        if ship.ability_info and AbilityType.REPAIR in ship.ability_info:
-            if ship.ability_info[AbilityType.REPAIR].can_use:
-                repair_range = ship.ability_info[AbilityType.REPAIR].range
-                for ally in view.get_damaged_ships():
-                    if ship.center.distance_to(ally.center) <= repair_range:
-                        return AbilityAction(
-                            ship_id=ship.id,
-                            ability=AbilityType.REPAIR,
-                            target_ship_id=ally.id
-                        )
-                # Move toward damaged ally
-                if view.get_damaged_ships():
-                    return self._move_toward(ship, view.get_damaged_ships()[0].center, view)
+    def _support_actions(self, ship: VisibleShip, view: GameView, ap: int) -> List[Action]:
+        """Support ships: move toward damaged allies and repair."""
+        actions = []
 
-        # Default: move toward center of fleet
-        return self._move_toward_fleet_center(ship, view)
+        if not ship.ability_info or AbilityType.REPAIR not in ship.ability_info:
+            return actions
 
-    def _minelayer_action(self, ship: VisibleShip, view: GameView,
-                          enemies: List[Position]) -> Optional[Action]:
-        """Deploy mines or attack."""
+        repair_info = ship.ability_info[AbilityType.REPAIR]
+        repair_range = repair_info.range
+        repair_cost = repair_info.ap_cost
+
+        damaged = view.get_damaged_ships()
+        if not damaged:
+            return actions
+
+        # Find closest damaged ally
+        target_ally = min(damaged, key=lambda a: ship.center.distance_to(a.center))
+        dist = ship.center.distance_to(target_ally.center)
+
+        # If in range, repair
+        if dist <= repair_range and repair_info.can_use and ap >= repair_cost:
+            actions.append(AbilityAction(
+                ship_id=ship.id,
+                ability=AbilityType.REPAIR,
+                target_ship_id=target_ally.id
+            ))
+            ap -= repair_cost
+
+        # If not in range, try to move closer then repair
+        elif dist > repair_range:
+            steps_needed = dist - repair_range
+            max_move = min(ap - repair_cost, ship.movement_remaining or 0)
+
+            if max_move > 0:
+                path = self._create_path_toward(ship.center, target_ally.center, max_move, view)
+                if path:
+                    actions.append(MoveAction(ship_id=ship.id, path=path))
+                    ap -= len(path)
+                    new_pos = path[-1]
+
+                    # Check if now in range
+                    if new_pos.distance_to(target_ally.center) <= repair_range and ap >= repair_cost:
+                        if repair_info.can_use:
+                            actions.append(AbilityAction(
+                                ship_id=ship.id,
+                                ability=AbilityType.REPAIR,
+                                target_ship_id=target_ally.id
+                            ))
+
+        return actions
+
+    def _minelayer_actions(self, ship: VisibleShip, view: GameView,
+                           enemies: List[Position], ap: int) -> List[Action]:
+        """Deploy mines then move away."""
+        actions = []
+
         if ship.ability_info and AbilityType.DEPLOY_MINE in ship.ability_info:
-            if ship.ability_info[AbilityType.DEPLOY_MINE].can_use:
+            mine_info = ship.ability_info[AbilityType.DEPLOY_MINE]
+            if mine_info.can_use and ap >= mine_info.ap_cost:
                 mine_pos = self._find_mine_position(ship, view, enemies)
                 if mine_pos:
-                    return AbilityAction(
+                    actions.append(AbilityAction(
                         ship_id=ship.id,
                         ability=AbilityType.DEPLOY_MINE,
                         target=mine_pos
-                    )
+                    ))
+                    ap -= mine_info.ap_cost
 
-        # Fall back to combat
-        return self._combat_action(ship, view, enemies)
-
-    def _artillery_action(self, ship: VisibleShip, view: GameView,
-                          enemies: List[Position]) -> Optional[Action]:
-        """Long-range precision strikes."""
-        # Precision strike if available
-        if ship.ability_info and AbilityType.PRECISION_STRIKE in ship.ability_info:
-            if ship.ability_info[AbilityType.PRECISION_STRIKE].can_use:
-                strike_range = ship.ability_info[AbilityType.PRECISION_STRIKE].range
-                for enemy_pos in enemies:
-                    if ship.center.distance_to(enemy_pos) <= strike_range:
-                        return FireAction(ship_id=ship.id, target=enemy_pos,
-                                         ability=AbilityType.PRECISION_STRIKE)
-
-        # Piercing shot
-        if ship.ability_info and AbilityType.PIERCING_SHOT in ship.ability_info:
-            if ship.ability_info[AbilityType.PIERCING_SHOT].can_use:
-                pierce_range = ship.ability_info[AbilityType.PIERCING_SHOT].range
-                for enemy_pos in enemies:
-                    if ship.center.distance_to(enemy_pos) <= pierce_range:
-                        return FireAction(ship_id=ship.id, target=enemy_pos,
-                                         ability=AbilityType.PIERCING_SHOT)
-
-        # Stay back but in range - move away if too close
-        if enemies:
+        # Move toward enemies to deploy more mines later
+        if ap > 0 and enemies and ship.movement_remaining:
             closest = min(enemies, key=lambda e: ship.center.distance_to(e))
-            if ship.center.distance_to(closest) < 6:
-                return self._move_away_from(ship, closest, view)
+            path = self._create_path_toward(ship.center, closest, min(ap, ship.movement_remaining), view)
+            if path:
+                actions.append(MoveAction(ship_id=ship.id, path=path))
 
-        return None
+        return actions
 
-    def _carrier_action(self, ship: VisibleShip, view: GameView,
-                        enemies: List[Position]) -> Optional[Action]:
+    def _artillery_actions(self, ship: VisibleShip, view: GameView,
+                           enemies: List[Position], ap: int) -> List[Action]:
+        """Long-range strikes - prefer staying back."""
+        actions = []
+
+        if not enemies or not ship.ability_info:
+            return actions
+
+        # Try precision strike first (high damage, long range)
+        if AbilityType.PRECISION_STRIKE in ship.ability_info:
+            strike_info = ship.ability_info[AbilityType.PRECISION_STRIKE]
+            if strike_info.can_use and ap >= strike_info.ap_cost:
+                for enemy_pos in enemies:
+                    if ship.center.distance_to(enemy_pos) <= strike_info.range:
+                        actions.append(FireAction(
+                            ship_id=ship.id, target=enemy_pos,
+                            ability=AbilityType.PRECISION_STRIKE
+                        ))
+                        ap -= strike_info.ap_cost
+                        break
+
+        # Try piercing shot if we have AP left
+        if ap > 0 and AbilityType.PIERCING_SHOT in ship.ability_info:
+            pierce_info = ship.ability_info[AbilityType.PIERCING_SHOT]
+            if pierce_info.can_use and ap >= pierce_info.ap_cost:
+                for enemy_pos in enemies:
+                    if ship.center.distance_to(enemy_pos) <= pierce_info.range:
+                        actions.append(FireAction(
+                            ship_id=ship.id, target=enemy_pos,
+                            ability=AbilityType.PIERCING_SHOT
+                        ))
+                        ap -= pierce_info.ap_cost
+                        break
+
+        # Artillery should stay back - move away if too close
+        closest = min(enemies, key=lambda e: ship.center.distance_to(e))
+        if ship.center.distance_to(closest) < 6 and ap > 0 and ship.movement_remaining:
+            move = self._move_away_from(ship, closest, view, ap)
+            if move:
+                actions.append(move)
+
+        return actions
+
+    def _carrier_actions(self, ship: VisibleShip, view: GameView,
+                         enemies: List[Position], ap: int) -> List[Action]:
         """Launch drones, stay back."""
+        actions = []
+
         if ship.ability_info and AbilityType.LAUNCH_DRONE in ship.ability_info:
-            if ship.ability_info[AbilityType.LAUNCH_DRONE].can_use:
-                return AbilityAction(ship_id=ship.id, ability=AbilityType.LAUNCH_DRONE)
+            drone_info = ship.ability_info[AbilityType.LAUNCH_DRONE]
+            if drone_info.can_use and ap >= drone_info.ap_cost:
+                actions.append(AbilityAction(ship_id=ship.id, ability=AbilityType.LAUNCH_DRONE))
+                ap -= drone_info.ap_cost
 
-        # Stay back - move toward our side
-        return self._move_toward_fleet_center(ship, view)
+        # Stay back - move toward fleet center with remaining AP
+        if ap > 0 and ship.movement_remaining:
+            move = self._move_toward_fleet_center(ship, view, ap)
+            if move:
+                actions.append(move)
 
-    def _combat_action(self, ship: VisibleShip, view: GameView,
-                       enemies: List[Position]) -> Optional[Action]:
-        """Standard combat: fire if in range, else move toward enemy."""
-        # Try special abilities first
-        if ship.ability_info:
-            if AbilityType.BURST_FIRE in ship.ability_info:
-                if ship.ability_info[AbilityType.BURST_FIRE].can_use:
-                    burst_range = ship.ability_info[AbilityType.BURST_FIRE].range
-                    for enemy_pos in enemies:
-                        if ship.center.distance_to(enemy_pos) <= burst_range:
-                            return FireAction(ship_id=ship.id, target=enemy_pos,
-                                             ability=AbilityType.BURST_FIRE)
+        return actions
 
-            if AbilityType.AREA_BOMBARDMENT in ship.ability_info:
-                if ship.ability_info[AbilityType.AREA_BOMBARDMENT].can_use:
-                    bomb_range = ship.ability_info[AbilityType.AREA_BOMBARDMENT].range
-                    # Find cluster
-                    for enemy_pos in enemies:
-                        if ship.center.distance_to(enemy_pos) <= bomb_range:
-                            nearby = sum(1 for e in enemies if enemy_pos.distance_to(e) <= 1)
-                            if nearby >= 2:
-                                return FireAction(ship_id=ship.id, target=enemy_pos,
-                                                 ability=AbilityType.AREA_BOMBARDMENT)
+    def _combat_actions(self, ship: VisibleShip, view: GameView,
+                        enemies: List[Position], ap: int) -> List[Action]:
+        """Combat ships: move into range and attack."""
+        actions = []
+        current_pos = ship.center
 
-        # Regular fire
-        if ship.can_fire() and enemies:
-            fire_range = ship.get_fire_range()
-            for enemy_pos in enemies:
-                if ship.center.distance_to(enemy_pos) <= fire_range:
-                    return FireAction(ship_id=ship.id, target=enemy_pos)
+        if not enemies:
+            return actions
 
-        # Move toward closest enemy
-        if ship.can_move() and enemies:
-            closest = min(enemies, key=lambda e: ship.center.distance_to(e))
-            return self._move_toward(ship, closest, view)
+        # Find best attack option
+        best_attack, attack_cost, attack_range = self._get_best_attack(ship, ap)
 
+        if best_attack:
+            # Check if any enemy in range
+            target = self._find_target_in_range(current_pos, enemies, attack_range)
+
+            if target:
+                # Fire immediately
+                actions.append(FireAction(ship_id=ship.id, target=target, ability=best_attack))
+                ap -= attack_cost
+            else:
+                # Try to move into range then fire
+                closest = min(enemies, key=lambda e: current_pos.distance_to(e))
+                dist = current_pos.distance_to(closest)
+                steps_needed = max(0, dist - attack_range)
+
+                max_move = min(ap - attack_cost, ship.movement_remaining or 0)
+
+                if steps_needed <= max_move and max_move > 0:
+                    path = self._create_path_toward(current_pos, closest, steps_needed, view)
+                    if path:
+                        actions.append(MoveAction(ship_id=ship.id, path=path))
+                        ap -= len(path)
+                        current_pos = path[-1]
+
+                        # Now fire
+                        target = self._find_target_in_range(current_pos, enemies, attack_range)
+                        if target and ap >= attack_cost:
+                            actions.append(FireAction(ship_id=ship.id, target=target, ability=best_attack))
+                            ap -= attack_cost
+
+                # If couldn't reach firing range, just move closer
+                elif ap > 0 and ship.movement_remaining:
+                    path = self._create_path_toward(current_pos, closest, min(ap, ship.movement_remaining), view)
+                    if path:
+                        actions.append(MoveAction(ship_id=ship.id, path=path))
+
+        return actions
+
+    def _get_best_attack(self, ship: VisibleShip, max_ap: int) -> Tuple[Optional[AbilityType], int, int]:
+        """Get best attack ability that fits within AP budget."""
+        if not ship.ability_info:
+            return None, 0, 0
+
+        # Priority: burst fire, area bombardment, regular fire
+        options = [
+            (AbilityType.BURST_FIRE, 3),  # High priority for damage
+            (AbilityType.AREA_BOMBARDMENT, 2),
+            (AbilityType.FIRE, 1),
+        ]
+
+        for ab_type, _ in options:
+            if ab_type in ship.ability_info:
+                info = ship.ability_info[ab_type]
+                if info.can_use and info.ap_cost <= max_ap:
+                    return ab_type, info.ap_cost, info.range
+
+        return None, 0, 0
+
+    def _find_target_in_range(self, from_pos: Position, enemies: List[Position],
+                               range_limit: int) -> Optional[Position]:
+        """Find an enemy within range."""
+        for enemy in enemies:
+            if from_pos.distance_to(enemy) <= range_limit:
+                return enemy
         return None
 
-    def _get_storm_escape_move(self, ship: VisibleShip, view: GameView) -> Optional[MoveAction]:
+    def _create_path_toward(self, from_pos: Position, target: Position,
+                            max_steps: int, view: GameView) -> List[Position]:
+        """Create path toward target."""
+        path = []
+        current = from_pos
+
+        for _ in range(max_steps):
+            best_dir = None
+            best_dist = current.distance_to(target)
+
+            for direction in Direction:
+                new_pos = current.move(direction)
+                if not view.is_valid_position(new_pos) or view.is_in_storm(new_pos):
+                    continue
+                dist = new_pos.distance_to(target)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_dir = direction
+
+            if best_dir:
+                current = current.move(best_dir)
+                path.append(current)
+            else:
+                break
+
+        return path
+
+    def _get_storm_escape_move(self, ship: VisibleShip, view: GameView,
+                                ap: int) -> Optional[MoveAction]:
         """Move out of storm."""
-        if not view.storm_min or not view.storm_max or not ship.can_move():
+        if not view.storm_min or not view.storm_max:
+            return None
+
+        max_move = min(ap, ship.movement_remaining or 0)
+        if max_move <= 0:
             return None
 
         safe_center = Position(
@@ -204,51 +344,47 @@ class TacticalBot(FleetBot):
             (view.storm_min.y + view.storm_max.y) // 2,
             (view.storm_min.z + view.storm_max.z) // 2
         )
-        return self._move_toward(ship, safe_center, view)
 
-    def _move_toward(self, ship: VisibleShip, target: Position, view: GameView) -> Optional[MoveAction]:
-        """Move toward a target."""
-        if not ship.can_move():
-            return None
-
-        best_dir = None
-        best_dist = ship.center.distance_to(target)
-
-        for direction in Direction:
-            new_pos = ship.center.move(direction)
-            if not view.is_valid_position(new_pos) or view.is_in_storm(new_pos):
-                continue
-            dist = new_pos.distance_to(target)
-            if dist < best_dist:
-                best_dist = dist
-                best_dir = direction
-
-        if best_dir:
-            return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
+        path = self._create_path_toward(ship.center, safe_center, max_move, view)
+        if path:
+            return MoveAction(ship_id=ship.id, path=path)
         return None
 
-    def _move_away_from(self, ship: VisibleShip, target: Position, view: GameView) -> Optional[MoveAction]:
+    def _move_away_from(self, ship: VisibleShip, target: Position,
+                        view: GameView, ap: int) -> Optional[MoveAction]:
         """Move away from a target."""
-        if not ship.can_move():
+        max_move = min(ap, ship.movement_remaining or 0)
+        if max_move <= 0:
             return None
 
-        best_dir = None
-        best_dist = ship.center.distance_to(target)
+        path = []
+        current = ship.center
 
-        for direction in Direction:
-            new_pos = ship.center.move(direction)
-            if not view.is_valid_position(new_pos) or view.is_in_storm(new_pos):
-                continue
-            dist = new_pos.distance_to(target)
-            if dist > best_dist:
-                best_dist = dist
-                best_dir = direction
+        for _ in range(max_move):
+            best_dir = None
+            best_dist = current.distance_to(target)
 
-        if best_dir:
-            return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
+            for direction in Direction:
+                new_pos = current.move(direction)
+                if not view.is_valid_position(new_pos) or view.is_in_storm(new_pos):
+                    continue
+                dist = new_pos.distance_to(target)
+                if dist > best_dist:
+                    best_dist = dist
+                    best_dir = direction
+
+            if best_dir:
+                current = current.move(best_dir)
+                path.append(current)
+            else:
+                break
+
+        if path:
+            return MoveAction(ship_id=ship.id, path=path)
         return None
 
-    def _move_toward_fleet_center(self, ship: VisibleShip, view: GameView) -> Optional[MoveAction]:
+    def _move_toward_fleet_center(self, ship: VisibleShip, view: GameView,
+                                   ap: int) -> Optional[MoveAction]:
         """Move toward center of own fleet."""
         allies = view.get_alive_ships()
         if not allies:
@@ -257,8 +393,16 @@ class TacticalBot(FleetBot):
         center_x = sum(s.center.x for s in allies) // len(allies)
         center_y = sum(s.center.y for s in allies) // len(allies)
         center_z = sum(s.center.z for s in allies) // len(allies)
+        center = Position(center_x, center_y, center_z)
 
-        return self._move_toward(ship, Position(center_x, center_y, center_z), view)
+        max_move = min(ap, ship.movement_remaining or 0)
+        if max_move <= 0:
+            return None
+
+        path = self._create_path_toward(ship.center, center, max_move, view)
+        if path:
+            return MoveAction(ship_id=ship.id, path=path)
+        return None
 
     def _find_mine_position(self, ship: VisibleShip, view: GameView,
                             enemies: List[Position]) -> Optional[Position]:

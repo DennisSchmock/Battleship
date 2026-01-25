@@ -1,7 +1,7 @@
 """DefensiveBot - Defensive-focused bot for Fleet Commander.
 
 Prioritizes survival and counter-attacks from safe distance.
-Each ship gets 1 action per turn.
+Uses AP system to retreat + shield, or fire + retreat.
 """
 import random
 from typing import List, Tuple, Optional, Set
@@ -22,9 +22,9 @@ class DefensiveBot(FleetBot):
     A defensive bot that prioritizes survival:
 
     Strategy:
-    1. Support ships repair damaged allies
-    2. Damaged ships retreat
-    3. Counter-attack only from safe distance
+    1. Support ships: move to allies + repair
+    2. Damaged ships: retreat + shield
+    3. Counter-attack from safe distance, then retreat
     4. Deploy mines defensively
     """
 
@@ -68,104 +68,208 @@ class DefensiveBot(FleetBot):
 
         # Process ships by priority
         for ship in view.get_ships_that_can_act():
-            action = self._get_ship_action(ship, view, enemy_positions, danger_zone)
-            if action:
-                actions.append(action)
+            ship_actions = self._get_ship_actions(ship, view, enemy_positions, danger_zone)
+            actions.extend(ship_actions)
 
         return actions
 
-    def _get_ship_action(self, ship: VisibleShip, view: GameView,
-                         enemies: List[Position], danger: Set[Position]) -> Optional[Action]:
-        """Get action based on ship role and situation."""
+    def _get_ship_actions(self, ship: VisibleShip, view: GameView,
+                          enemies: List[Position], danger: Set[Position]) -> List[Action]:
+        """Get all actions for a ship based on its role and situation."""
+        ap = ship.action_points
 
         # Support ships: repair damaged allies
         if ship.ship_type == ShipType.SUPPORT:
-            return self._support_action(ship, view)
+            return self._support_actions(ship, view, ap)
 
         # Damaged ships: retreat or shield
         if ship.hp and ship.max_hp and ship.hp < ship.max_hp * 0.5:
-            return self._retreat_action(ship, view, enemies)
+            return self._retreat_actions(ship, view, enemies, ap)
 
         # Minelayers: deploy mines defensively
         if ship.ship_type == ShipType.MINELAYER:
-            return self._minelayer_action(ship, view, enemies)
+            return self._minelayer_actions(ship, view, enemies, ap)
 
         # Combat ships: counter-attack from safe distance
-        return self._counter_attack(ship, view, enemies, danger)
+        return self._counter_attack_actions(ship, view, enemies, danger, ap)
 
-    def _support_action(self, ship: VisibleShip, view: GameView) -> Optional[Action]:
-        """Repair damaged allies."""
-        if ship.ability_info and AbilityType.REPAIR in ship.ability_info:
-            if ship.ability_info[AbilityType.REPAIR].can_use:
-                repair_range = ship.ability_info[AbilityType.REPAIR].range
-                damaged = view.get_damaged_ships()
+    def _support_actions(self, ship: VisibleShip, view: GameView, ap: int) -> List[Action]:
+        """Repair damaged allies, moving closer if needed."""
+        actions = []
 
-                # Find ally in range
-                for ally in damaged:
-                    if ship.center.distance_to(ally.center) <= repair_range:
-                        return AbilityAction(
+        if not ship.ability_info or AbilityType.REPAIR not in ship.ability_info:
+            return self._retreat_to_safe_zone(ship, view, ap)
+
+        repair_info = ship.ability_info[AbilityType.REPAIR]
+        repair_range = repair_info.range
+        repair_cost = repair_info.ap_cost
+
+        damaged = view.get_damaged_ships()
+        if not damaged:
+            return self._retreat_to_safe_zone(ship, view, ap)
+
+        # Find most damaged ally
+        most_damaged = min(damaged, key=lambda s: s.hp / s.max_hp if s.max_hp else 1)
+        dist = ship.center.distance_to(most_damaged.center)
+
+        # If in range, repair first
+        if dist <= repair_range and repair_info.can_use and ap >= repair_cost:
+            actions.append(AbilityAction(
+                ship_id=ship.id,
+                ability=AbilityType.REPAIR,
+                target_ship_id=most_damaged.id
+            ))
+            ap -= repair_cost
+
+        # If not in range, move closer then repair
+        elif dist > repair_range and repair_info.can_use:
+            steps_needed = dist - repair_range
+            max_move = min(ap - repair_cost, ship.movement_remaining or 0)
+
+            if max_move > 0:
+                path = self._create_path_toward(ship.center, most_damaged.center,
+                                                min(steps_needed, max_move), view)
+                if path:
+                    actions.append(MoveAction(ship_id=ship.id, path=path))
+                    ap -= len(path)
+                    new_pos = path[-1]
+
+                    # Check if now in range
+                    if new_pos.distance_to(most_damaged.center) <= repair_range and ap >= repair_cost:
+                        actions.append(AbilityAction(
                             ship_id=ship.id,
                             ability=AbilityType.REPAIR,
-                            target_ship_id=ally.id
-                        )
+                            target_ship_id=most_damaged.id
+                        ))
+                        ap -= repair_cost
 
-                # Move toward most damaged ally
-                if damaged:
-                    most_damaged = min(damaged, key=lambda s: s.hp / s.max_hp if s.max_hp else 1)
-                    return self._move_toward(ship, most_damaged.center, view)
+        # Use remaining AP to stay near fleet
+        if ap > 0 and ship.movement_remaining:
+            move = self._move_toward_fleet_center(ship, view, ap)
+            if move:
+                actions.append(move)
 
-        return self._move_toward_safe_zone(ship, view)
+        return actions
 
-    def _retreat_action(self, ship: VisibleShip, view: GameView,
-                        enemies: List[Position]) -> Optional[Action]:
-        """Retreat to safety."""
-        # Use shield if available and enemies nearby
-        if ship.ability_info and AbilityType.SHIELD in ship.ability_info:
-            if ship.ability_info[AbilityType.SHIELD].can_use:
-                if any(ship.center.distance_to(e) <= 6 for e in enemies):
-                    return AbilityAction(ship_id=ship.id, ability=AbilityType.SHIELD)
+    def _retreat_actions(self, ship: VisibleShip, view: GameView,
+                         enemies: List[Position], ap: int) -> List[Action]:
+        """Retreat to safety, use shield if needed."""
+        actions = []
 
-        # Move toward safe zone
-        return self._move_toward_safe_zone(ship, view)
-
-    def _minelayer_action(self, ship: VisibleShip, view: GameView,
-                          enemies: List[Position]) -> Optional[Action]:
-        """Deploy mines between us and enemies."""
-        if ship.ability_info and AbilityType.DEPLOY_MINE in ship.ability_info:
-            if ship.ability_info[AbilityType.DEPLOY_MINE].can_use:
-                mine_pos = self._find_defensive_mine_pos(ship, view, enemies)
-                if mine_pos:
-                    return AbilityAction(
-                        ship_id=ship.id,
-                        ability=AbilityType.DEPLOY_MINE,
-                        target=mine_pos
-                    )
-
-        # Fall back to counter-attack
-        return self._counter_attack(ship, view, enemies, set())
-
-    def _counter_attack(self, ship: VisibleShip, view: GameView,
-                        enemies: List[Position], danger: Set[Position]) -> Optional[Action]:
-        """Attack only if safe to do so."""
-        # Only attack if not in danger zone
-        if ship.center in danger:
-            return self._move_toward_safe_zone(ship, view)
-
-        # Fire at enemies in range
-        if ship.can_fire() and enemies:
+        # Fire first if enemies are close (might as well damage them)
+        if enemies and ship.can_fire():
             fire_range = ship.get_fire_range()
             for enemy_pos in enemies:
                 if ship.center.distance_to(enemy_pos) <= fire_range:
-                    return FireAction(ship_id=ship.id, target=enemy_pos)
+                    # Find cheapest fire option
+                    if ship.ability_info and AbilityType.FIRE in ship.ability_info:
+                        fire_info = ship.ability_info[AbilityType.FIRE]
+                        if fire_info.can_use and ap >= fire_info.ap_cost:
+                            actions.append(FireAction(ship_id=ship.id, target=enemy_pos))
+                            ap -= fire_info.ap_cost
+                            break
 
-        # Move to maintain safe distance
-        if enemies:
+        # Use shield if available and enemies very close
+        if ship.ability_info and AbilityType.SHIELD in ship.ability_info:
+            shield_info = ship.ability_info[AbilityType.SHIELD]
+            if shield_info.can_use and ap >= shield_info.ap_cost:
+                if any(ship.center.distance_to(e) <= 4 for e in enemies):
+                    actions.append(AbilityAction(ship_id=ship.id, ability=AbilityType.SHIELD))
+                    ap -= shield_info.ap_cost
+
+        # Retreat with remaining AP
+        if ap > 0 and ship.movement_remaining and enemies:
             closest = min(enemies, key=lambda e: ship.center.distance_to(e))
-            if ship.center.distance_to(closest) < 8:
-                # Too close - retreat
-                return self._move_away_from(ship, closest, view)
+            path = self._create_path_away(ship.center, closest, min(ap, ship.movement_remaining), view)
+            if path:
+                actions.append(MoveAction(ship_id=ship.id, path=path))
 
-        return None
+        return actions
+
+    def _minelayer_actions(self, ship: VisibleShip, view: GameView,
+                           enemies: List[Position], ap: int) -> List[Action]:
+        """Deploy mines between us and enemies, then retreat."""
+        actions = []
+
+        if ship.ability_info and AbilityType.DEPLOY_MINE in ship.ability_info:
+            mine_info = ship.ability_info[AbilityType.DEPLOY_MINE]
+            if mine_info.can_use and ap >= mine_info.ap_cost:
+                mine_pos = self._find_defensive_mine_pos(ship, view, enemies)
+                if mine_pos:
+                    actions.append(AbilityAction(
+                        ship_id=ship.id,
+                        ability=AbilityType.DEPLOY_MINE,
+                        target=mine_pos
+                    ))
+                    ap -= mine_info.ap_cost
+
+        # Retreat toward safe zone with remaining AP
+        if ap > 0 and ship.movement_remaining:
+            retreat = self._retreat_to_safe_zone(ship, view, ap)
+            actions.extend(retreat)
+
+        return actions
+
+    def _counter_attack_actions(self, ship: VisibleShip, view: GameView,
+                                 enemies: List[Position], danger: Set[Position],
+                                 ap: int) -> List[Action]:
+        """Attack from safe distance, then retreat."""
+        actions = []
+        current_pos = ship.center
+
+        # If in danger zone, retreat first
+        if current_pos in danger:
+            return self._retreat_to_safe_zone(ship, view, ap)
+
+        # Fire at enemies in range
+        if enemies and ship.ability_info:
+            # Find best attack we can afford
+            best_attack = None
+            best_cost = 0
+            best_range = 0
+
+            for ab_type in [AbilityType.FIRE, AbilityType.BURST_FIRE, AbilityType.AREA_BOMBARDMENT,
+                            AbilityType.PIERCING_SHOT, AbilityType.PRECISION_STRIKE]:
+                if ab_type in ship.ability_info:
+                    info = ship.ability_info[ab_type]
+                    if info.can_use and info.ap_cost <= ap:
+                        best_attack = ab_type
+                        best_cost = info.ap_cost
+                        best_range = info.range
+                        break  # Take first available
+
+            if best_attack:
+                for enemy_pos in enemies:
+                    if current_pos.distance_to(enemy_pos) <= best_range:
+                        actions.append(FireAction(ship_id=ship.id, target=enemy_pos,
+                                                 ability=best_attack))
+                        ap -= best_cost
+                        break
+
+        # After attacking, retreat if enemies are close
+        if enemies and ap > 0 and ship.movement_remaining:
+            closest = min(enemies, key=lambda e: current_pos.distance_to(e))
+            if current_pos.distance_to(closest) < 8:
+                path = self._create_path_away(current_pos, closest,
+                                              min(ap, ship.movement_remaining), view)
+                if path:
+                    actions.append(MoveAction(ship_id=ship.id, path=path))
+
+        return actions
+
+    def _retreat_to_safe_zone(self, ship: VisibleShip, view: GameView, ap: int) -> List[Action]:
+        """Move toward safe zone."""
+        if not self.safe_zone_center:
+            return []
+
+        max_move = min(ap, ship.movement_remaining or 0)
+        if max_move <= 0:
+            return []
+
+        path = self._create_path_toward(ship.center, self.safe_zone_center, max_move, view)
+        if path:
+            return [MoveAction(ship_id=ship.id, path=path)]
+        return []
 
     def _calculate_danger_zone(self, enemies: List[Position]) -> Set[Position]:
         """Mark positions near enemies as dangerous."""
@@ -178,52 +282,79 @@ class DefensiveBot(FleetBot):
                             danger.add(Position(enemy.x + dx, enemy.y + dy, enemy.z + dz))
         return danger
 
-    def _move_toward(self, ship: VisibleShip, target: Position, view: GameView) -> Optional[MoveAction]:
-        """Move toward a target."""
-        if not ship.can_move():
+    def _create_path_toward(self, from_pos: Position, target: Position,
+                            max_steps: int, view: GameView) -> List[Position]:
+        """Create path toward target."""
+        path = []
+        current = from_pos
+
+        for _ in range(max_steps):
+            best_dir = None
+            best_dist = current.distance_to(target)
+
+            for direction in Direction:
+                new_pos = current.move(direction)
+                if not view.is_valid_position(new_pos) or view.is_in_storm(new_pos):
+                    continue
+                dist = new_pos.distance_to(target)
+                if dist < best_dist:
+                    best_dist = dist
+                    best_dir = direction
+
+            if best_dir:
+                current = current.move(best_dir)
+                path.append(current)
+            else:
+                break
+
+        return path
+
+    def _create_path_away(self, from_pos: Position, target: Position,
+                          max_steps: int, view: GameView) -> List[Position]:
+        """Create path away from target."""
+        path = []
+        current = from_pos
+
+        for _ in range(max_steps):
+            best_dir = None
+            best_dist = current.distance_to(target)
+
+            for direction in Direction:
+                new_pos = current.move(direction)
+                if not view.is_valid_position(new_pos) or view.is_in_storm(new_pos):
+                    continue
+                dist = new_pos.distance_to(target)
+                if dist > best_dist:
+                    best_dist = dist
+                    best_dir = direction
+
+            if best_dir:
+                current = current.move(best_dir)
+                path.append(current)
+            else:
+                break
+
+        return path
+
+    def _move_toward_fleet_center(self, ship: VisibleShip, view: GameView,
+                                   ap: int) -> Optional[MoveAction]:
+        """Move toward center of own fleet."""
+        allies = view.get_alive_ships()
+        if not allies:
             return None
 
-        best_dir = None
-        best_dist = ship.center.distance_to(target)
+        center_x = sum(s.center.x for s in allies) // len(allies)
+        center_y = sum(s.center.y for s in allies) // len(allies)
+        center_z = sum(s.center.z for s in allies) // len(allies)
+        center = Position(center_x, center_y, center_z)
 
-        for direction in Direction:
-            new_pos = ship.center.move(direction)
-            if not view.is_valid_position(new_pos) or view.is_in_storm(new_pos):
-                continue
-            dist = new_pos.distance_to(target)
-            if dist < best_dist:
-                best_dist = dist
-                best_dir = direction
-
-        if best_dir:
-            return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
-        return None
-
-    def _move_away_from(self, ship: VisibleShip, target: Position, view: GameView) -> Optional[MoveAction]:
-        """Move away from a target."""
-        if not ship.can_move():
+        max_move = min(ap, ship.movement_remaining or 0)
+        if max_move <= 0:
             return None
 
-        best_dir = None
-        best_dist = ship.center.distance_to(target)
-
-        for direction in Direction:
-            new_pos = ship.center.move(direction)
-            if not view.is_valid_position(new_pos) or view.is_in_storm(new_pos):
-                continue
-            dist = new_pos.distance_to(target)
-            if dist > best_dist:
-                best_dist = dist
-                best_dir = direction
-
-        if best_dir:
-            return MoveAction(ship_id=ship.id, path=[ship.center.move(best_dir)])
-        return None
-
-    def _move_toward_safe_zone(self, ship: VisibleShip, view: GameView) -> Optional[MoveAction]:
-        """Move toward safe zone."""
-        if self.safe_zone_center:
-            return self._move_toward(ship, self.safe_zone_center, view)
+        path = self._create_path_toward(ship.center, center, max_move, view)
+        if path:
+            return MoveAction(ship_id=ship.id, path=path)
         return None
 
     def _find_defensive_mine_pos(self, ship: VisibleShip, view: GameView,

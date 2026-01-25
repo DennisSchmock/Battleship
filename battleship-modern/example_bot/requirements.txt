@@ -1,0 +1,2 @@
+# Requirements for Fleet Commander example bot
+websockets>=12.0

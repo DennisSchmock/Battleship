@@ -684,6 +684,7 @@ from .fleet_commander import (
 from .fleet_commander.bot_interface import create_game_view
 from .fleet_commander.bots import TacticalBot, AggressiveBot, DefensiveBot, RandomBot
 from .fleet_commander.replay import GameRecorder, ReplayStorage, ReplayPlayer
+from .fleet_commander.websocket_bot import WebSocketBotAdapter, serialize_config
 
 # Replay storage
 replay_storage = ReplayStorage("replays")
@@ -818,21 +819,306 @@ async def get_replay(replay_id: str):
     return replay.to_dict()
 
 
+async def _run_fleet_commander_with_ws_bot(
+    websocket: WebSocket,
+    ws_player_id: int,
+    player1_type: str,
+    player2_type: str,
+    delay: float,
+    use_small: bool
+):
+    """Run Fleet Commander game with external WebSocket bot as a player."""
+    from .fleet_commander.websocket_bot import (
+        deserialize_position, deserialize_direction, deserialize_ship_type, deserialize_action
+    )
+
+    # Create config
+    config = FCGameConfig.small() if use_small else FCGameConfig()
+
+    # Create internal bot for the non-WebSocket player
+    other_player_id = 1 - ws_player_id
+    other_type = player2_type if ws_player_id == 0 else player1_type
+    other_bot_class = FLEET_BOTS.get(other_type, TacticalBot)
+    other_bot = other_bot_class()
+    other_bot.on_game_start(config)
+
+    # Create game
+    game = FleetCommanderGame(config=config)
+
+    # Send game_start to WebSocket bot
+    await websocket.send_json({
+        "type": "game_start",
+        "config": serialize_config(config)
+    })
+
+    # Get fleet placement from WebSocket bot
+    zone = config.player1_zone if ws_player_id == 0 else config.player2_zone
+    await websocket.send_json({
+        "type": "place_fleet",
+        "zone_x_min": zone[0],
+        "zone_x_max": zone[1]
+    })
+
+    # Wait for fleet_placement response
+    response = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+    placement_data = json.loads(response)
+
+    if placement_data.get("type") != "fleet_placement":
+        await websocket.send_json({"type": "error", "message": f"Expected fleet_placement, got {placement_data.get('type')}"})
+        return
+
+    # Parse WebSocket bot's placements
+    ws_placements = []
+    for p in placement_data["placements"]:
+        ship_type = deserialize_ship_type(p["ship_type"])
+        position = deserialize_position(p["position"])
+        direction = deserialize_direction(p["direction"])
+        ws_placements.append((ship_type, position, direction))
+
+    # Get internal bot's placements
+    other_zone = config.player2_zone if ws_player_id == 0 else config.player1_zone
+    other_placements = other_bot.place_fleet(config, other_zone[0], other_zone[1])
+
+    # Setup game ships
+    if ws_player_id == 0:
+        game.setup_fleet(0, ws_placements)
+        game.setup_fleet(1, other_placements)
+        game.players[0].name = "WebSocketBot"
+        game.players[1].name = other_bot.get_name()
+    else:
+        game.setup_fleet(0, other_placements)
+        game.setup_fleet(1, ws_placements)
+        game.players[0].name = other_bot.get_name()
+        game.players[1].name = "WebSocketBot"
+
+    game.start_game()
+
+    # Create recorder
+    recorder = GameRecorder(config, game.players[0].name, game.players[1].name)
+    recorder.record_initial_state(
+        [s.to_dict() for s in game.players[0].ships],
+        [s.to_dict() for s in game.players[1].ships]
+    )
+
+    max_turns = config.max_turns
+
+    # Game loop
+    while game.phase == FCGamePhase.PLAYING and game.turn < max_turns:
+        current_player_idx = game.current_player_idx
+        player = game.current_player
+
+        # Get view
+        state_dict = game.get_visible_state(current_player_idx)
+        view = create_game_view(state_dict)
+
+        if current_player_idx == ws_player_id:
+            # WebSocket bot's turn - send get_actions and wait for response
+            view_dict = _create_view_dict(view, state_dict)
+
+            await websocket.send_json({
+                "type": "get_actions",
+                "view": view_dict
+            })
+
+            # Wait for actions response
+            response = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
+            actions_data = json.loads(response)
+
+            if actions_data.get("type") != "actions":
+                await websocket.send_json({"type": "error", "message": f"Expected actions, got {actions_data.get('type')}"})
+                return
+
+            actions = [deserialize_action(a) for a in actions_data.get("actions", [])]
+        else:
+            # Internal bot's turn
+            actions = other_bot.get_actions(view)
+
+        # Record and execute
+        recorder.record_actions(game.turn, current_player_idx, actions)
+        result = game.execute_turn(actions)
+
+        # Record result
+        full_state = {
+            "player1_ships": [s.to_dict() for s in game.players[0].ships],
+            "player2_ships": [s.to_dict() for s in game.players[1].ships],
+            "storm_bounds": (
+                game.storm.current_bounds[0].to_tuple(),
+                game.storm.current_bounds[1].to_tuple()
+            ) if game.storm else None
+        }
+        recorder.record_turn_result(result, full_state)
+
+        # Notify appropriate bot
+        if current_player_idx == ws_player_id:
+            # Send turn_result to WebSocket bot
+            result_dict = {
+                "turn": result.turn,
+                "player_id": result.player_id,
+                "actions_taken": [
+                    {
+                        "success": ar.success,
+                        "message": ar.message,
+                        "damage_dealt": ar.damage_dealt,
+                        "ships_hit": ar.ships_hit,
+                        "ships_destroyed": ar.ships_destroyed,
+                    }
+                    for ar in result.actions_taken
+                ],
+                "storm_damage": result.storm_damage_taken,
+                "storm_shrunk": result.storm_shrunk,
+            }
+            await websocket.send_json({
+                "type": "turn_result",
+                "result": result_dict
+            })
+        else:
+            other_bot.on_turn_result(result)
+
+        await asyncio.sleep(delay)
+
+    # Game ended
+    winner_id = game.winner if game.winner is not None else -1
+    ws_won = (winner_id == ws_player_id)
+
+    # Record game end
+    recorder.record_game_end(winner_id, {
+        "player1_ships": [s.to_dict() for s in game.players[0].ships],
+        "player2_ships": [s.to_dict() for s in game.players[1].ships],
+    })
+
+    # Save replay
+    replay_id = replay_storage.save(recorder.get_replay())
+
+    # Determine reason
+    if winner_id >= 0:
+        loser_id = 1 - winner_id
+        if all(s.is_destroyed for s in game.players[loser_id].ships):
+            reason = "All enemy ships destroyed"
+        else:
+            reason = "More ships remaining at end"
+    else:
+        reason = "Draw"
+
+    # Send game_end to WebSocket bot
+    await websocket.send_json({
+        "type": "game_end",
+        "won": ws_won,
+        "reason": reason,
+        "replay_id": replay_id
+    })
+
+
+def _create_view_dict(view, state_dict) -> dict:
+    """Create JSON-serializable view dict for WebSocket bot."""
+    from .fleet_commander.websocket_bot import serialize_position
+    from .fleet_commander.models import AbilityType
+
+    return {
+        "turn": view.turn,
+        "my_player_id": view.my_player_id,
+        "grid_size": list(view.grid_size),
+        "my_ships": [
+            {
+                "id": s.id,
+                "positions": [serialize_position(p) for p in s.positions],
+                "ship_type": s.ship_type.value if s.ship_type else None,
+                "hp": s.hp,
+                "max_hp": s.max_hp,
+                "speed": s.speed,
+                "movement_remaining": s.movement_remaining,
+                "action_points": s.action_points,
+                "max_action_points": s.max_action_points,
+                "has_acted": s.has_acted,
+                "can_act": s.can_act(),
+                "can_fire": s.can_fire(),
+                "can_scan": s.can_scan(),
+                "can_move": s.can_move(),
+                "fire_range": s.get_fire_range(),
+                "scan_range": s.get_scan_range(),
+                "abilities": {
+                    k.value: {
+                        "can_use": v.can_use,
+                        "ap_cost": v.ap_cost,
+                        "cooldown": v.cooldown_remaining,
+                        "range": v.range,
+                        "damage": v.damage,
+                        "area_size": v.area_size,
+                    }
+                    for k, v in (s.ability_info or {}).items()
+                }
+            }
+            for s in view.my_ships
+        ],
+        "visible_enemy_ships": [
+            {
+                "id": s.id,
+                "positions": [serialize_position(p) for p in s.positions],
+                "ship_type": s.ship_type.value if s.ship_type else None,
+            }
+            for s in view.visible_enemy_ships
+        ],
+        "my_mines": [[m[0], serialize_position(m[1])] for m in view.my_mines],
+        "my_sensors": [[s[0], serialize_position(s[1])] for s in view.my_sensors],
+        "my_decoys": [[d[0], serialize_position(d[1])] for d in view.my_decoys],
+        "my_drones": [[d[0], serialize_position(d[1]), d[2]] for d in view.my_drones],
+        "storm": {
+            "min": serialize_position(view.storm_min) if view.storm_min else None,
+            "max": serialize_position(view.storm_max) if view.storm_max else None,
+            "turns_until_shrink": view.storm_turns_until_shrink,
+            "damage": view.storm_damage
+        } if view.storm_min else None
+    }
+
+
 @app.websocket("/ws/fleet-commander")
-async def fleet_commander_websocket(websocket: WebSocket):
-    """WebSocket for Fleet Commander game."""
+async def fleet_commander_websocket(
+    websocket: WebSocket,
+    player1_type: str = "tactical",
+    player2_type: str = "tactical",
+    delay: int = 500,
+    small_grid: bool = True
+):
+    """WebSocket for Fleet Commander game.
+
+    Query params:
+    - player1_type: Bot type or 'websocket' for external bot
+    - player2_type: Bot type or 'websocket' for external bot
+    - delay: Delay between turns in ms (default 500)
+    - small_grid: Use small grid (default true)
+
+    If player1_type=websocket, the connecting client plays as player 1.
+    If player2_type=websocket, the connecting client plays as player 2.
+    """
     await websocket.accept()
 
+    delay_sec = delay / 1000.0
+    use_small = small_grid
+
+    # Check if this is a WebSocket bot connection
+    ws_player_id = None
+    if player1_type == "websocket":
+        ws_player_id = 0
+    elif player2_type == "websocket":
+        ws_player_id = 1
+
     try:
+        # If WebSocket bot, start game immediately
+        if ws_player_id is not None:
+            await _run_fleet_commander_with_ws_bot(
+                websocket, ws_player_id, player1_type, player2_type, delay_sec, use_small
+            )
+            return
+
+        # Otherwise, wait for start_game message (spectator mode)
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
 
             if message.get("action") == "start_game":
-                p1_type = message.get("player1_type", "tactical")
-                p2_type = message.get("player2_type", "tactical")
-                delay = message.get("delay", 500) / 1000.0
-                use_small = message.get("small_grid", True)
+                p1_type = message.get("player1_type", player1_type)
+                p2_type = message.get("player2_type", player2_type)
+                delay_sec = message.get("delay", delay) / 1000.0
+                use_small = message.get("small_grid", small_grid)
 
                 # Create config
                 config = FCGameConfig.small() if use_small else FCGameConfig()

@@ -586,7 +586,7 @@ class FireAction(Action):
             "type": "fire",
             "ship_id": self.ship_id,
             "target": self.target.to_tuple(),
-            "ability": self.ability.value
+            "ability": self.ability.value if self.ability else None
         }
 
 
@@ -601,7 +601,7 @@ class ScanAction(Action):
             "type": "scan",
             "ship_id": self.ship_id,
             "center": self.center.to_tuple(),
-            "ability": self.ability.value
+            "ability": self.ability.value if self.ability else None
         }
 
 

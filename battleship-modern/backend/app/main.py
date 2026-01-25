@@ -989,13 +989,17 @@ async def _run_fleet_commander_with_ws_bot(
     # Save replay
     replay_id = replay_storage.save(recorder.get_replay())
 
-    # Determine reason
+    # Determine reason (from winner/loser perspective)
     if winner_id >= 0:
         loser_id = 1 - winner_id
-        if all(s.is_destroyed for s in game.players[loser_id].ships):
-            reason = "All enemy ships destroyed"
+        loser_fleet_destroyed = all(s.is_destroyed for s in game.players[loser_id].ships)
+
+        if ws_won:
+            # WebSocket bot won
+            reason = "All enemy ships destroyed" if loser_fleet_destroyed else "More ships remaining"
         else:
-            reason = "More ships remaining at end"
+            # WebSocket bot lost
+            reason = "Your fleet was destroyed" if loser_fleet_destroyed else "Fewer ships remaining"
     else:
         reason = "Draw"
 

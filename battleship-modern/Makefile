@@ -1,16 +1,17 @@
-.PHONY: install install-backend install-frontend run run-backend run-frontend test clean help
+.PHONY: install install-backend install-frontend run run-backend run-frontend test test-bot clean help
 
 # Default target
 help:
 	@echo "SpaceBattleship - Makefile commands"
 	@echo ""
-	@echo "  make install     - Install all dependencies"
-	@echo "  make run         - Run both backend and frontend"
-	@echo "  make run-backend - Run only backend (port 8000)"
-	@echo "  make run-frontend- Run only frontend (port 5173)"
-	@echo "  make test        - Run test games"
-	@echo "  make train       - Train RL agent"
-	@echo "  make clean       - Remove generated files"
+	@echo "  make install      - Install all dependencies"
+	@echo "  make run          - Run both backend and frontend"
+	@echo "  make run-backend  - Run only backend (port 8000)"
+	@echo "  make run-frontend - Run only frontend (port 5173)"
+	@echo "  make test         - Run test games"
+	@echo "  make test-bot     - Run WebSocket bot against backend"
+	@echo "  make train        - Train RL agent"
+	@echo "  make clean        - Remove generated files"
 	@echo ""
 
 # Install all dependencies
@@ -55,6 +56,15 @@ for i in range(10): \
     if winner.name == 'SmartHunter': smart_wins += 1; \
 print(f'SmartHunter vs Random: {smart_wins}/10 wins'); \
 "
+
+# Test WebSocket bot against backend
+# Usage: make test-bot [OPPONENT=aggressive]
+OPPONENT ?= tactical
+test-bot:
+	@echo "Testing WebSocket bot against $(OPPONENT) bot..."
+	@echo "Make sure backend is running (make run-backend)"
+	@echo ""
+	cd example_bot && python simple_bot.py --server ws://localhost:8000 --opponent $(OPPONENT)
 
 # Train RL agent
 train:

@@ -1759,7 +1759,7 @@ async def _run_tournament_match(
         "player1_name": p1.name,
         "player2_name": p2.name,
         "config": {
-            "grid_size": [config.grid_width, config.grid_depth, config.grid_height],
+            "grid_size": list(config.grid_size),
         },
     }
     logger.info(f"live_game_state set: turn={game.turn}, phase={game.phase}")
@@ -1794,7 +1794,7 @@ async def _run_tournament_match(
             "player1_name": p1.name,
             "player2_name": p2.name,
             "config": {
-                "grid_size": [config.grid_width, config.grid_depth, config.grid_height],
+                "grid_size": list(config.grid_size),
             },
         }
 
@@ -1813,7 +1813,7 @@ async def _run_tournament_match(
         "player2_name": p2.name,
         "winner": game.winner,
         "config": {
-            "grid_size": [config.grid_width, config.grid_depth, config.grid_height],
+            "grid_size": list(config.grid_size),
         },
     }
 

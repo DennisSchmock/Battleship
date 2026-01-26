@@ -1611,66 +1611,90 @@ async def run_tournament(tournament_id: str):
 
 async def _run_tournament_matches(tournament_id: str):
     """Background task to run all tournament matches."""
+    import logging
+    logger = logging.getLogger(__name__)
+
     tournament = tournament_manager.get_tournament(tournament_id)
     if not tournament:
+        logger.error(f"Tournament {tournament_id} not found")
         return
 
-    # Broadcast tournament start
-    await _broadcast_tournament_event(tournament_id, {
-        "type": "tournament_started",
-        "tournament": tournament.to_dict(),
-    })
-
-    while not tournament.is_completed():
-        match = tournament.get_next_match()
-        if not match:
-            break
-
-        match.state = MatchState.IN_PROGRESS
-        tournament.current_match = match
-
-        # Get participants
-        p1 = tournament.participants.get(match.player1_id)
-        p2 = tournament.participants.get(match.player2_id)
-
-        if not p1 or not p2:
-            continue
-
-        # Broadcast match start
+    try:
+        # Broadcast tournament start
         await _broadcast_tournament_event(tournament_id, {
-            "type": "match_start",
-            "match": match.to_dict(),
-            "player1": p1.to_dict(),
-            "player2": p2.to_dict(),
+            "type": "tournament_started",
+            "tournament": tournament.to_dict(),
         })
 
-        # Run the match
-        result = await _run_tournament_match(tournament, match, p1, p2)
+        while not tournament.is_completed():
+            match = tournament.get_next_match()
+            if not match:
+                logger.info(f"No more matches for tournament {tournament_id}")
+                break
 
-        # Record result
-        tournament.record_match_result(match.id, result)
+            match.state = MatchState.IN_PROGRESS
+            tournament.current_match = match
+            logger.info(f"Starting match {match.id}: {match.player1_id} vs {match.player2_id}")
 
-        # Broadcast match end
+            # Get participants
+            p1 = tournament.participants.get(match.player1_id)
+            p2 = tournament.participants.get(match.player2_id)
+
+            if not p1 or not p2:
+                logger.error(f"Participants not found for match {match.id}")
+                continue
+
+            # Broadcast match start
+            await _broadcast_tournament_event(tournament_id, {
+                "type": "match_start",
+                "match": match.to_dict(),
+                "player1": p1.to_dict(),
+                "player2": p2.to_dict(),
+            })
+
+            # Run the match
+            try:
+                result = await _run_tournament_match(tournament, match, p1, p2)
+            except Exception as e:
+                logger.exception(f"Error running match {match.id}: {e}")
+                # Create a default result (draw)
+                result = MatchResult(
+                    winner_id=None,
+                    loser_id=None,
+                    turns=0,
+                    winner_ships_remaining=0,
+                    loser_ships_remaining=0,
+                    replay_id=None,
+                )
+
+            # Record result
+            tournament.record_match_result(match.id, result)
+
+            # Broadcast match end
+            await _broadcast_tournament_event(tournament_id, {
+                "type": "match_end",
+                "match": match.to_dict(),
+                "result": result.to_dict(),
+                "standings": [s.to_dict() for s in tournament.get_leaderboard()],
+            })
+
+            # Brief pause between matches
+            await asyncio.sleep(2)
+
+        # Tournament complete
+        tournament.complete()
+        winner = tournament.get_winner()
+        logger.info(f"Tournament {tournament_id} completed. Winner: {winner.name if winner else 'None'}")
+
         await _broadcast_tournament_event(tournament_id, {
-            "type": "match_end",
-            "match": match.to_dict(),
-            "result": result.to_dict(),
+            "type": "tournament_end",
+            "winner": winner.to_dict() if winner else None,
             "standings": [s.to_dict() for s in tournament.get_leaderboard()],
+            "tournament": tournament.to_dict(),
         })
-
-        # Brief pause between matches
-        await asyncio.sleep(2)
-
-    # Tournament complete
-    tournament.complete()
-    winner = tournament.get_winner()
-
-    await _broadcast_tournament_event(tournament_id, {
-        "type": "tournament_end",
-        "winner": winner.to_dict() if winner else None,
-        "standings": [s.to_dict() for s in tournament.get_leaderboard()],
-        "tournament": tournament.to_dict(),
-    })
+    except Exception as e:
+        logger.exception(f"Fatal error in tournament {tournament_id}: {e}")
+        tournament.live_game_state = None
 
 
 async def _run_tournament_match(
@@ -1680,7 +1704,11 @@ async def _run_tournament_match(
     p2: Participant,
 ) -> MatchResult:
     """Run a single match between two participants."""
+    import logging
+    logger = logging.getLogger(__name__)
     from .fleet_commander.bot_interface import create_game_view
+
+    logger.info(f"Running match: {p1.name} vs {p2.name}")
 
     # Create game config
     config = FCGameConfig.small() if tournament.use_small_grid else FCGameConfig()
@@ -1689,19 +1717,25 @@ async def _run_tournament_match(
     game = FleetCommanderGame(config=config)
 
     # Create bots (internal or WebSocket)
+    logger.info(f"Creating bots...")
     bot1 = _create_tournament_bot(p1, config)
     bot2 = _create_tournament_bot(p2, config)
+    logger.info(f"Bots created: {type(bot1).__name__}, {type(bot2).__name__}")
 
     # Get placements
+    logger.info(f"Getting fleet placements...")
     placements1 = bot1.place_fleet(config, config.player1_zone[0], config.player1_zone[1])
     placements2 = bot2.place_fleet(config, config.player2_zone[0], config.player2_zone[1])
+    logger.info(f"Placements received")
 
     # Setup game
+    logger.info(f"Setting up game...")
     game.setup_fleet(0, placements1)
     game.setup_fleet(1, placements2)
     game.players[0].name = p1.name
     game.players[1].name = p2.name
     game.start_game()
+    logger.info(f"Game started")
 
     # Create recorder
     recorder = GameRecorder(config, p1.name, p2.name)
@@ -1714,6 +1748,7 @@ async def _run_tournament_match(
     max_turns = config.max_turns
 
     # Set initial game state for spectators BEFORE the loop starts
+    logger.info(f"Setting initial live_game_state for tournament {tournament.id}")
     tournament.live_game_state = {
         "turn": game.turn,
         "phase": game.phase.value if hasattr(game.phase, 'value') else str(game.phase),
@@ -1727,6 +1762,7 @@ async def _run_tournament_match(
             "grid_size": [config.grid_width, config.grid_depth, config.grid_height],
         },
     }
+    logger.info(f"live_game_state set: turn={game.turn}, phase={game.phase}")
 
     # Small delay before starting to allow spectators to connect
     await asyncio.sleep(0.5)

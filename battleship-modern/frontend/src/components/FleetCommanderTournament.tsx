@@ -60,6 +60,17 @@ interface Tournament {
   completed_at: string | null;
 }
 
+interface LiveGameState {
+  turn: number;
+  phase: string;
+  current_player: number;
+  player1_name: string;
+  player2_name: string;
+  player1_ships: Array<{ is_destroyed: boolean }>;
+  player2_ships: Array<{ is_destroyed: boolean }>;
+  winner?: number;
+}
+
 // ============================================================================
 // API Functions
 // ============================================================================
@@ -116,6 +127,18 @@ async function deleteTournament(tournamentId: string): Promise<void> {
   await fetch(`${API_BASE}/api/fleet-commander/tournaments/${tournamentId}`, {
     method: 'DELETE',
   });
+}
+
+async function fetchLiveGameState(tournamentId: string): Promise<LiveGameState | null> {
+  try {
+    const res = await fetch(`${API_BASE}/api/fleet-commander/tournaments/${tournamentId}/live`);
+    if (res.status === 404) return null;
+    if (!res.ok) return null;
+    const data = await res.json();
+    return data.game_state;
+  } catch {
+    return null;
+  }
 }
 
 // ============================================================================
@@ -428,7 +451,9 @@ function TournamentDetail({
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [selectedMatch, setSelectedMatch] = useState<SelectedMatch | null>(null);
+  const [liveGameState, setLiveGameState] = useState<LiveGameState | null>(null);
   const pollRef = useRef<number | null>(null);
+  const livePollRef = useRef<number | null>(null);
 
   const loadTournament = useCallback(async () => {
     try {
@@ -469,6 +494,38 @@ function TournamentDetail({
       }
     };
   }, [tournament?.state, loadTournament]);
+
+  // Poll for live game state when tournament is running
+  useEffect(() => {
+    const isRunning = tournament?.state === 'in_progress' && tournament?.current_match;
+
+    if (!isRunning) {
+      setLiveGameState(null);
+      if (livePollRef.current) {
+        clearInterval(livePollRef.current);
+        livePollRef.current = null;
+      }
+      return;
+    }
+
+    // Fetch immediately
+    fetchLiveGameState(tournamentId).then(setLiveGameState);
+
+    // Poll every 500ms for smooth updates
+    if (!livePollRef.current) {
+      livePollRef.current = window.setInterval(async () => {
+        const state = await fetchLiveGameState(tournamentId);
+        setLiveGameState(state);
+      }, 500);
+    }
+
+    return () => {
+      if (livePollRef.current) {
+        clearInterval(livePollRef.current);
+        livePollRef.current = null;
+      }
+    };
+  }, [tournament?.state, tournament?.current_match, tournamentId]);
 
   const handleRun = async () => {
     if (!tournament) return;
@@ -621,12 +678,36 @@ function TournamentDetail({
                 <span className="player1">
                   {tournament.participants.find((p) => p.id === tournament.current_match?.player1_id)?.name}
                 </span>
-                <span className="vs">VS</span>
+                <span className="vs">vs</span>
                 <span className="player2">
                   {tournament.participants.find((p) => p.id === tournament.current_match?.player2_id)?.name}
                 </span>
               </div>
-              {/* 3D Mini view would go here */}
+              {liveGameState ? (
+                <div className="live-status">
+                  <div className="turn-counter">
+                    Turn {liveGameState.turn}
+                  </div>
+                  <div className="ship-counts">
+                    <span className="ships-player1">
+                      {liveGameState.player1_ships.filter(s => !s.is_destroyed).length} ships
+                    </span>
+                    <span className="ships-separator">|</span>
+                    <span className="ships-player2">
+                      {liveGameState.player2_ships.filter(s => !s.is_destroyed).length} ships
+                    </span>
+                  </div>
+                  {liveGameState.phase === 'finished' && liveGameState.winner !== undefined && (
+                    <div className="match-winner">
+                      Winner: {liveGameState.winner === 0 ? liveGameState.player1_name : liveGameState.player2_name}
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="live-status waiting">
+                  Waiting for match data...
+                </div>
+              )}
             </div>
           )}
 

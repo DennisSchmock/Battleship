@@ -703,6 +703,55 @@
   font-size: 18px;
 }
 
+/* Live Status */
+.live-status {
+  margin-top: 20px;
+  padding-top: 15px;
+  border-top: 1px solid #333;
+  text-align: center;
+}
+
+.live-status.waiting {
+  color: #888;
+  font-style: italic;
+}
+
+.turn-counter {
+  font-size: 28px;
+  font-weight: bold;
+  color: #00ff88;
+  margin-bottom: 10px;
+}
+
+.ship-counts {
+  display: flex;
+  justify-content: center;
+  gap: 15px;
+  font-size: 16px;
+}
+
+.ships-player1 {
+  color: #4488ff;
+}
+
+.ships-player2 {
+  color: #ff4444;
+}
+
+.ships-separator {
+  color: #555;
+}
+
+.match-winner {
+  margin-top: 15px;
+  padding: 10px 20px;
+  background: linear-gradient(135deg, #00aa55, #008844);
+  border-radius: 8px;
+  color: #fff;
+  font-weight: bold;
+  display: inline-block;
+}
+
 /* Winner Display */
 .winner-display {
   background: linear-gradient(135deg, #1a1a2e, #2a2a4e);

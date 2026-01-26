@@ -443,6 +443,25 @@ class Storm:
             return True
         return False
 
+    def to_dict(self) -> dict:
+        """Convert storm state to dictionary for serialization."""
+        min_pos, max_pos = self.current_bounds
+        final_min, final_max = self.final_bounds
+        return {
+            "current_bounds": {
+                "min": {"x": min_pos.x, "y": min_pos.y, "z": min_pos.z},
+                "max": {"x": max_pos.x, "y": max_pos.y, "z": max_pos.z},
+            },
+            "final_bounds": {
+                "min": {"x": final_min.x, "y": final_min.y, "z": final_min.z},
+                "max": {"x": final_max.x, "y": final_max.y, "z": final_max.z},
+            },
+            "shrink_rate": self.shrink_rate,
+            "shrink_interval": self.shrink_interval,
+            "damage_per_turn": self.damage_per_turn,
+            "turns_until_shrink": self.turns_until_shrink,
+        }
+
 
 # =============================================================================
 # GAME STATE

@@ -1713,6 +1713,24 @@ async def _run_tournament_match(
     bots = [bot1, bot2]
     max_turns = config.max_turns
 
+    # Set initial game state for spectators BEFORE the loop starts
+    tournament.live_game_state = {
+        "turn": game.turn,
+        "phase": game.phase.value if hasattr(game.phase, 'value') else str(game.phase),
+        "current_player": game.current_player_idx,
+        "player1_ships": [s.to_dict() for s in game.players[0].ships],
+        "player2_ships": [s.to_dict() for s in game.players[1].ships],
+        "storm": game.storm.to_dict() if game.storm else None,
+        "player1_name": p1.name,
+        "player2_name": p2.name,
+        "config": {
+            "grid_size": [config.grid_width, config.grid_depth, config.grid_height],
+        },
+    }
+
+    # Small delay before starting to allow spectators to connect
+    await asyncio.sleep(0.5)
+
     # Game loop
     while game.phase == FCGamePhase.PLAYING and game.turn < max_turns:
         current_bot = bots[game.current_player_idx]
@@ -1744,8 +1762,27 @@ async def _run_tournament_match(
             },
         }
 
-        # Small delay for watchability
-        await asyncio.sleep(0.1)
+        # Delay between turns for watchability (0.3s = ~20 turns visible per 6 seconds)
+        await asyncio.sleep(0.3)
+
+    # Update final state with winner before clearing
+    tournament.live_game_state = {
+        "turn": game.turn,
+        "phase": "finished",
+        "current_player": game.current_player_idx,
+        "player1_ships": [s.to_dict() for s in game.players[0].ships],
+        "player2_ships": [s.to_dict() for s in game.players[1].ships],
+        "storm": game.storm.to_dict() if game.storm else None,
+        "player1_name": p1.name,
+        "player2_name": p2.name,
+        "winner": game.winner,
+        "config": {
+            "grid_size": [config.grid_width, config.grid_depth, config.grid_height],
+        },
+    }
+
+    # Keep final state visible for a moment
+    await asyncio.sleep(2.0)
 
     # Game ended - clear live state
     tournament.live_game_state = None

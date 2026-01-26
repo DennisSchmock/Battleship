@@ -696,6 +696,8 @@ export function TournamentMatchViewer({
   const [gridSize, setGridSize] = useState<[number, number, number]>([12, 12, 6]);
   const [matchEnded, setMatchEnded] = useState(false);
   const pollRef = useRef<number | null>(null);
+  const notFoundCountRef = useRef(0);
+  const hasReceivedDataRef = useRef(false);
 
   const {
     gameState: replayGameState,
@@ -720,17 +722,33 @@ export function TournamentMatchViewer({
       try {
         const res = await fetch(`${API_BASE}/api/fleet-commander/tournaments/${tournamentId}/live`);
         if (res.status === 404) {
-          // Match ended
-          setMatchEnded(true);
-          setLoading(false);
-          if (pollRef.current) {
-            clearInterval(pollRef.current);
-            pollRef.current = null;
+          notFoundCountRef.current++;
+          // Only consider match ended if we've received data before AND got multiple 404s
+          // OR if we've been waiting a while without any data
+          if (hasReceivedDataRef.current && notFoundCountRef.current >= 3) {
+            setMatchEnded(true);
+            setLoading(false);
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
+          } else if (!hasReceivedDataRef.current && notFoundCountRef.current >= 15) {
+            // Waited 3+ seconds without data, match probably ended before we connected
+            setMatchEnded(true);
+            setLoading(false);
+            if (pollRef.current) {
+              clearInterval(pollRef.current);
+              pollRef.current = null;
+            }
           }
           return;
         }
         if (!res.ok) throw new Error('Failed to fetch live state');
         const data = await res.json();
+
+        // Reset not found counter and mark that we've received data
+        notFoundCountRef.current = 0;
+        hasReceivedDataRef.current = true;
 
         setLiveGameState({
           turn: data.game_state.turn,
@@ -739,6 +757,7 @@ export function TournamentMatchViewer({
           player2_ships: data.game_state.player2_ships,
           storm: data.game_state.storm,
           current_player: data.game_state.current_player,
+          winner: data.game_state.winner,
         });
 
         if (data.game_state.config?.grid_size) {
@@ -748,7 +767,7 @@ export function TournamentMatchViewer({
         setLoading(false);
       } catch (e) {
         // Don't show error on first poll failure - might just be starting
-        if (!loading) {
+        if (!loading && hasReceivedDataRef.current) {
           setError('Lost connection to live match');
         }
       }

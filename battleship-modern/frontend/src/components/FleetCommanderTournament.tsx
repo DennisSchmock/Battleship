@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import './FleetCommanderTournament.css';
+import { TournamentMatchViewer } from './TournamentMatchViewer';
 
 // ============================================================================
 // TYPES
@@ -347,11 +348,13 @@ function MatchList({
   participants,
   currentMatchId,
   tournamentCompleted,
+  onMatchSelect,
 }: {
   matches: Match[];
   participants: Participant[];
   currentMatchId?: string;
   tournamentCompleted: boolean;
+  onMatchSelect: (match: Match) => void;
 }) {
   const getParticipantName = (id: string) => {
     return participants.find((p) => p.id === id)?.name || 'Unknown';
@@ -363,11 +366,13 @@ function MatchList({
         const isCurrent = match.id === currentMatchId && !tournamentCompleted;
         const isCompleted = match.state === 'completed';
         const winnerId = match.result?.winner_id;
+        const hasReplay = isCompleted && match.result?.replay_id;
 
         return (
           <div
             key={match.id}
-            className={`match-item ${isCurrent ? 'current' : ''} ${isCompleted ? 'completed' : ''}`}
+            className={`match-item ${isCurrent ? 'current' : ''} ${isCompleted ? 'completed' : ''} ${hasReplay ? 'clickable' : ''}`}
+            onClick={() => hasReplay && onMatchSelect(match)}
           >
             <div className="match-players">
               <span className={winnerId === match.player1_id ? 'winner' : ''}>
@@ -381,6 +386,7 @@ function MatchList({
             {isCompleted && match.result && (
               <div className="match-result">
                 {match.result.turns} turns
+                {hasReplay && <span className="replay-icon" title="Watch replay">▶</span>}
               </div>
             )}
             {isCurrent && <span className="live-badge">LIVE</span>}
@@ -395,6 +401,12 @@ function MatchList({
 // TOURNAMENT DETAIL VIEW
 // ============================================================================
 
+interface SelectedMatch {
+  match: Match;
+  player1Name: string;
+  player2Name: string;
+}
+
 function TournamentDetail({
   tournamentId,
   onBack,
@@ -404,6 +416,7 @@ function TournamentDetail({
 }) {
   const [tournament, setTournament] = useState<Tournament | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [selectedMatch, setSelectedMatch] = useState<SelectedMatch | null>(null);
   const pollRef = useRef<number | null>(null);
 
   const loadTournament = useCallback(async () => {
@@ -466,6 +479,30 @@ function TournamentDetail({
     }
   };
 
+  const handleMatchSelect = (match: Match) => {
+    if (!tournament || !match.result?.replay_id) return;
+    const player1 = tournament.participants.find(p => p.id === match.player1_id);
+    const player2 = tournament.participants.find(p => p.id === match.player2_id);
+    setSelectedMatch({
+      match,
+      player1Name: player1?.name || 'Player 1',
+      player2Name: player2?.name || 'Player 2',
+    });
+  };
+
+  // Show match viewer if a match is selected
+  if (selectedMatch && selectedMatch.match.result?.replay_id) {
+    return (
+      <TournamentMatchViewer
+        matchId={selectedMatch.match.id}
+        replayId={selectedMatch.match.result.replay_id}
+        player1Name={selectedMatch.player1Name}
+        player2Name={selectedMatch.player2Name}
+        onClose={() => setSelectedMatch(null)}
+      />
+    );
+  }
+
   if (error) {
     return (
       <div className="tournament-detail error">
@@ -515,6 +552,7 @@ function TournamentDetail({
               participants={tournament.participants}
               currentMatchId={tournament.current_match?.id}
               tournamentCompleted={isCompleted}
+              onMatchSelect={handleMatchSelect}
             />
           </section>
         </div>

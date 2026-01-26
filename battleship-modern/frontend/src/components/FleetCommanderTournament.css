@@ -533,6 +533,18 @@
   opacity: 0.7;
 }
 
+.match-item.clickable {
+  cursor: pointer;
+  opacity: 1;
+  transition: all 0.2s;
+}
+
+.match-item.clickable:hover {
+  border-color: #4488ff;
+  background: #0d0d22;
+  transform: translateX(4px);
+}
+
 .match-players {
   display: flex;
   align-items: center;
@@ -552,6 +564,17 @@
 .match-result {
   color: #888;
   font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.replay-icon {
+  color: #4488ff;
+  font-size: 10px;
+  background: rgba(68, 136, 255, 0.2);
+  padding: 2px 6px;
+  border-radius: 4px;
 }
 
 .live-badge {

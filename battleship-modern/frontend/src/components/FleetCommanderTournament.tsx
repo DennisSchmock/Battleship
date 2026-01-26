@@ -354,7 +354,7 @@ function MatchList({
   participants: Participant[];
   currentMatchId?: string;
   tournamentCompleted: boolean;
-  onMatchSelect: (match: Match) => void;
+  onMatchSelect: (match: Match, isLive: boolean) => void;
 }) {
   const getParticipantName = (id: string) => {
     return participants.find((p) => p.id === id)?.name || 'Unknown';
@@ -367,12 +367,21 @@ function MatchList({
         const isCompleted = match.state === 'completed';
         const winnerId = match.result?.winner_id;
         const hasReplay = isCompleted && match.result?.replay_id;
+        const isClickable = isCurrent || hasReplay;
+
+        const handleClick = () => {
+          if (isCurrent) {
+            onMatchSelect(match, true);  // Live match
+          } else if (hasReplay) {
+            onMatchSelect(match, false); // Replay
+          }
+        };
 
         return (
           <div
             key={match.id}
-            className={`match-item ${isCurrent ? 'current' : ''} ${isCompleted ? 'completed' : ''} ${hasReplay ? 'clickable' : ''}`}
-            onClick={() => hasReplay && onMatchSelect(match)}
+            className={`match-item ${isCurrent ? 'current' : ''} ${isCompleted ? 'completed' : ''} ${isClickable ? 'clickable' : ''}`}
+            onClick={handleClick}
           >
             <div className="match-players">
               <span className={winnerId === match.player1_id ? 'winner' : ''}>
@@ -405,6 +414,8 @@ interface SelectedMatch {
   match: Match;
   player1Name: string;
   player2Name: string;
+  mode: 'live' | 'replay';
+  tournamentId?: string;
 }
 
 function TournamentDetail({
@@ -479,23 +490,33 @@ function TournamentDetail({
     }
   };
 
-  const handleMatchSelect = (match: Match) => {
-    if (!tournament || !match.result?.replay_id) return;
+  const handleMatchSelect = (match: Match, isLive: boolean) => {
+    if (!tournament) return;
+
+    // For live matches, we need the current match to be this one
+    if (isLive && tournament.current_match?.id !== match.id) return;
+
+    // For replay matches, we need a replay_id
+    if (!isLive && !match.result?.replay_id) return;
+
     const player1 = tournament.participants.find(p => p.id === match.player1_id);
     const player2 = tournament.participants.find(p => p.id === match.player2_id);
     setSelectedMatch({
       match,
       player1Name: player1?.name || 'Player 1',
       player2Name: player2?.name || 'Player 2',
+      mode: isLive ? 'live' : 'replay',
+      tournamentId: isLive ? tournament.id : undefined,
     });
   };
 
   // Show match viewer if a match is selected
-  if (selectedMatch && selectedMatch.match.result?.replay_id) {
+  if (selectedMatch) {
     return (
       <TournamentMatchViewer
-        matchId={selectedMatch.match.id}
-        replayId={selectedMatch.match.result.replay_id}
+        mode={selectedMatch.mode}
+        tournamentId={selectedMatch.tournamentId}
+        replayId={selectedMatch.match.result?.replay_id || undefined}
         player1Name={selectedMatch.player1Name}
         player2Name={selectedMatch.player2Name}
         onClose={() => setSelectedMatch(null)}

@@ -248,6 +248,42 @@
   color: #fff;
 }
 
+/* Live mode styles */
+.live-badge-header {
+  color: #ff4444;
+  font-weight: bold;
+  animation: pulse 1s infinite;
+  margin-left: 0.5rem;
+}
+
+.live-controls {
+  justify-content: center;
+  gap: 2rem;
+}
+
+.live-info {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+}
+
+.live-indicator-big {
+  color: #ff4444;
+  font-size: 1.2rem;
+  font-weight: bold;
+  animation: pulse 1s infinite;
+}
+
+.live-status {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 /* Responsive */
 @media (max-width: 768px) {
   .playback-controls {

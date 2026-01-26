@@ -884,6 +884,22 @@ async def get_tournament(tournament_id: str):
     return {"tournament": tournament.to_dict()}
 
 
+@app.get("/api/fleet-commander/tournaments/{tournament_id}/live")
+async def get_live_match_state(tournament_id: str):
+    """Get the current live game state for spectating."""
+    tournament = tournament_manager.get_tournament(tournament_id)
+    if not tournament:
+        raise HTTPException(status_code=404, detail="Tournament not found")
+
+    if not tournament.live_game_state:
+        raise HTTPException(status_code=404, detail="No live match in progress")
+
+    return {
+        "match_id": tournament.current_match.id if tournament.current_match else None,
+        "game_state": tournament.live_game_state,
+    }
+
+
 @app.post("/api/fleet-commander/tournaments/{tournament_id}/add-bot")
 async def add_internal_bot(tournament_id: str, bot_type: str):
     """Add an internal bot to the tournament."""
@@ -1713,10 +1729,26 @@ async def _run_tournament_match(
         result = game.execute_turn(actions)
         current_bot.on_turn_result(result)
 
+        # Update live game state for spectators
+        tournament.live_game_state = {
+            "turn": game.turn,
+            "phase": game.phase.value if hasattr(game.phase, 'value') else str(game.phase),
+            "current_player": game.current_player_idx,
+            "player1_ships": [s.to_dict() for s in game.players[0].ships],
+            "player2_ships": [s.to_dict() for s in game.players[1].ships],
+            "storm": game.storm.to_dict() if game.storm else None,
+            "player1_name": p1.name,
+            "player2_name": p2.name,
+            "config": {
+                "grid_size": [config.grid_width, config.grid_depth, config.grid_height],
+            },
+        }
+
         # Small delay for watchability
         await asyncio.sleep(0.1)
 
-    # Game ended
+    # Game ended - clear live state
+    tournament.live_game_state = None
     winner_id = game.winner if game.winner is not None else -1
     replay_id = replay_storage.save(recorder.get_replay())
 

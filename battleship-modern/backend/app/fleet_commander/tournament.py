@@ -162,6 +162,7 @@ class FleetCommanderTournament:
         self.standings: Dict[str, Standing] = {}
         self.current_match: Optional[Match] = None
         self.current_round: int = 0
+        self.live_game_state: Optional[dict] = None  # Current game state for live viewing
 
         self.spectators: List[Any] = []  # WebSocket connections
         self.created_at = datetime.now()

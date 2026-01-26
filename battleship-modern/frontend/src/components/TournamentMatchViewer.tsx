@@ -673,27 +673,32 @@ function useReplayPlayer(replay: ReplayData | null) {
 const API_BASE = 'http://localhost:8000';
 
 interface TournamentMatchViewerProps {
-  matchId?: string;  // For live matches (future)
-  replayId?: string;
+  mode: 'live' | 'replay';
+  tournamentId?: string;  // Required for live mode
+  replayId?: string;      // Required for replay mode
   player1Name: string;
   player2Name: string;
   onClose: () => void;
 }
 
 export function TournamentMatchViewer({
-  matchId: _matchId,  // Reserved for live match viewing
+  mode,
+  tournamentId,
   replayId,
   player1Name,
   player2Name,
   onClose,
 }: TournamentMatchViewerProps) {
   const [replay, setReplay] = useState<ReplayData | null>(null);
+  const [liveGameState, setLiveGameState] = useState<GameState | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [gridSize, setGridSize] = useState<[number, number, number]>([12, 12, 6]);
+  const [matchEnded, setMatchEnded] = useState(false);
+  const pollRef = useRef<number | null>(null);
 
   const {
-    gameState,
+    gameState: replayGameState,
     currentTurn,
     currentTurnIndex,
     totalTurns,
@@ -704,10 +709,69 @@ export function TournamentMatchViewer({
     seekToTurn,
   } = useReplayPlayer(replay);
 
+  // Use live state or replay state depending on mode
+  const gameState = mode === 'live' ? liveGameState : replayGameState;
+
+  // Poll for live match state
+  useEffect(() => {
+    if (mode !== 'live' || !tournamentId) return;
+
+    async function fetchLiveState() {
+      try {
+        const res = await fetch(`${API_BASE}/api/fleet-commander/tournaments/${tournamentId}/live`);
+        if (res.status === 404) {
+          // Match ended
+          setMatchEnded(true);
+          setLoading(false);
+          if (pollRef.current) {
+            clearInterval(pollRef.current);
+            pollRef.current = null;
+          }
+          return;
+        }
+        if (!res.ok) throw new Error('Failed to fetch live state');
+        const data = await res.json();
+
+        setLiveGameState({
+          turn: data.game_state.turn,
+          phase: data.game_state.phase,
+          player1_ships: data.game_state.player1_ships,
+          player2_ships: data.game_state.player2_ships,
+          storm: data.game_state.storm,
+          current_player: data.game_state.current_player,
+        });
+
+        if (data.game_state.config?.grid_size) {
+          setGridSize(data.game_state.config.grid_size);
+        }
+        setError(null);
+        setLoading(false);
+      } catch (e) {
+        // Don't show error on first poll failure - might just be starting
+        if (!loading) {
+          setError('Lost connection to live match');
+        }
+      }
+    }
+
+    // Initial fetch
+    fetchLiveState();
+
+    // Poll every 200ms for smooth updates
+    pollRef.current = window.setInterval(fetchLiveState, 200);
+
+    return () => {
+      if (pollRef.current) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [mode, tournamentId, loading]);
+
   // Load replay
   useEffect(() => {
-    if (!replayId) {
-      setLoading(false);
+    if (mode !== 'replay' || !replayId) {
+      if (mode === 'replay') setLoading(false);
       return;
     }
 
@@ -729,7 +793,7 @@ export function TournamentMatchViewer({
     }
 
     loadReplay();
-  }, [replayId]);
+  }, [mode, replayId]);
 
   // Download replay as JSON
   const handleDownload = useCallback(() => {
@@ -780,7 +844,20 @@ export function TournamentMatchViewer({
   if (loading) {
     return (
       <div className="match-viewer">
-        <div className="match-viewer-loading">Loading replay...</div>
+        <div className="match-viewer-loading">
+          {mode === 'live' ? 'Connecting to live match...' : 'Loading replay...'}
+        </div>
+      </div>
+    );
+  }
+
+  if (matchEnded && mode === 'live') {
+    return (
+      <div className="match-viewer">
+        <div className="match-viewer-error">
+          <p>Match has ended</p>
+          <button onClick={onClose}>Back to Tournament</button>
+        </div>
       </div>
     );
   }
@@ -796,6 +873,8 @@ export function TournamentMatchViewer({
     );
   }
 
+  const isLive = mode === 'live';
+
   return (
     <div className="match-viewer">
       <header className="match-viewer-header">
@@ -806,14 +885,19 @@ export function TournamentMatchViewer({
           <span className="player1">{player1Name}</span>
           <span className="vs">vs</span>
           <span className="player2">{player2Name}</span>
+          {isLive && <span className="live-badge-header">● LIVE</span>}
         </div>
         <div className="match-actions">
-          <button className="download-btn" onClick={handleDownload} title="Download full replay">
-            📥 Replay
-          </button>
-          <button className="download-btn" onClick={handleDownloadTrainingData} title="Download as training data">
-            🧠 Training Data
-          </button>
+          {!isLive && (
+            <>
+              <button className="download-btn" onClick={handleDownload} title="Download full replay">
+                📥 Replay
+              </button>
+              <button className="download-btn" onClick={handleDownloadTrainingData} title="Download as training data">
+                🧠 Training Data
+              </button>
+            </>
+          )}
         </div>
       </header>
 
@@ -843,72 +927,84 @@ export function TournamentMatchViewer({
         )}
       </div>
 
-      <div className="playback-controls">
-        <div className="playback-buttons">
-          <button
-            className="control-btn"
-            onClick={() => seekToTurn(0)}
-            disabled={currentTurnIndex === 0}
-          >
-            ⏮
-          </button>
-          <button
-            className="control-btn"
-            onClick={() => seekToTurn(Math.max(0, currentTurnIndex - 1))}
-            disabled={currentTurnIndex === 0}
-          >
-            ◀
-          </button>
-          <button
-            className="control-btn play-btn"
-            onClick={() => setIsPlaying(!isPlaying)}
-          >
-            {isPlaying ? '⏸' : '▶'}
-          </button>
-          <button
-            className="control-btn"
-            onClick={() => seekToTurn(Math.min(totalTurns - 1, currentTurnIndex + 1))}
-            disabled={currentTurnIndex >= totalTurns - 1}
-          >
-            ▶
-          </button>
-          <button
-            className="control-btn"
-            onClick={() => seekToTurn(totalTurns - 1)}
-            disabled={currentTurnIndex >= totalTurns - 1}
-          >
-            ⏭
-          </button>
+      {isLive ? (
+        <div className="playback-controls live-controls">
+          <div className="live-info">
+            <span className="live-indicator-big">● LIVE</span>
+            <span className="turn-counter">Turn {gameState?.turn || 0}</span>
+          </div>
+          <div className="live-status">
+            Watching live match in progress...
+          </div>
         </div>
+      ) : (
+        <div className="playback-controls">
+          <div className="playback-buttons">
+            <button
+              className="control-btn"
+              onClick={() => seekToTurn(0)}
+              disabled={currentTurnIndex === 0}
+            >
+              ⏮
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => seekToTurn(Math.max(0, currentTurnIndex - 1))}
+              disabled={currentTurnIndex === 0}
+            >
+              ◀
+            </button>
+            <button
+              className="control-btn play-btn"
+              onClick={() => setIsPlaying(!isPlaying)}
+            >
+              {isPlaying ? '⏸' : '▶'}
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => seekToTurn(Math.min(totalTurns - 1, currentTurnIndex + 1))}
+              disabled={currentTurnIndex >= totalTurns - 1}
+            >
+              ▶
+            </button>
+            <button
+              className="control-btn"
+              onClick={() => seekToTurn(totalTurns - 1)}
+              disabled={currentTurnIndex >= totalTurns - 1}
+            >
+              ⏭
+            </button>
+          </div>
 
-        <div className="timeline">
-          <input
-            type="range"
-            min={0}
-            max={Math.max(0, totalTurns - 1)}
-            value={currentTurnIndex}
-            onChange={(e) => seekToTurn(parseInt(e.target.value))}
-            className="timeline-slider"
-          />
-          <span className="turn-counter">
-            Turn {currentTurnIndex + 1} / {totalTurns}
-          </span>
-        </div>
+          <div className="timeline">
+            <input
+              type="range"
+              min={0}
+              max={Math.max(0, totalTurns - 1)}
+              value={currentTurnIndex}
+              onChange={(e) => seekToTurn(parseInt(e.target.value))}
+              className="timeline-slider"
+            />
+            <span className="turn-counter">
+              Turn {currentTurnIndex + 1} / {totalTurns}
+            </span>
+          </div>
 
-        <div className="speed-control">
-          <label>Speed:</label>
-          <select
-            value={playbackSpeed}
-            onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
-          >
-            <option value={0.5}>0.5x</option>
-            <option value={1}>1x</option>
-            <option value={2}>2x</option>
-            <option value={4}>4x</option>
-            <option value={8}>8x</option>
-          </select>
+          <div className="speed-control">
+            <label>Speed:</label>
+            <select
+              value={playbackSpeed}
+              onChange={(e) => setPlaybackSpeed(parseFloat(e.target.value))}
+            >
+              <option value={0.5}>0.5x</option>
+              <option value={1}>1x</option>
+              <option value={2}>2x</option>
+              <option value={4}>4x</option>
+              <option value={8}>8x</option>
+            </select>
+          </div>
         </div>
-      </div>
+      )}
     </div>
   );
 }

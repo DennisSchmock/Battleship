@@ -1764,6 +1764,12 @@ async def _run_tournament_match(
     }
     logger.info(f"live_game_state set: turn={game.turn}, phase={game.phase}")
 
+    # Broadcast initial state via WebSocket
+    await _broadcast_tournament_event(tournament.id, {
+        "type": "live_match_update",
+        "game_state": tournament.live_game_state,
+    })
+
     # Small delay before starting to allow spectators to connect
     await asyncio.sleep(0.5)
 
@@ -1799,6 +1805,12 @@ async def _run_tournament_match(
             "last_turn_result": result.to_dict(),
         }
 
+        # Broadcast turn update via WebSocket
+        await _broadcast_tournament_event(tournament.id, {
+            "type": "live_match_update",
+            "game_state": tournament.live_game_state,
+        })
+
         # Delay between turns for watchability (0.3s = ~20 turns visible per 6 seconds)
         await asyncio.sleep(0.3)
 
@@ -1818,11 +1830,20 @@ async def _run_tournament_match(
         },
     }
 
+    # Broadcast final state via WebSocket
+    await _broadcast_tournament_event(tournament.id, {
+        "type": "live_match_update",
+        "game_state": tournament.live_game_state,
+    })
+
     # Keep final state visible for a moment
     await asyncio.sleep(2.0)
 
-    # Game ended - clear live state
+    # Game ended - clear live state and notify
     tournament.live_game_state = None
+    await _broadcast_tournament_event(tournament.id, {
+        "type": "live_match_ended",
+    })
     winner_id = game.winner if game.winner is not None else -1
     replay_id = replay_storage.save(recorder.get_replay())
 

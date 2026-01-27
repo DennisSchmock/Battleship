@@ -453,7 +453,7 @@ function TournamentDetail({
   const [selectedMatch, setSelectedMatch] = useState<SelectedMatch | null>(null);
   const [liveGameState, setLiveGameState] = useState<LiveGameState | null>(null);
   const pollRef = useRef<number | null>(null);
-  const livePollRef = useRef<number | null>(null);
+  const wsRef = useRef<WebSocket | null>(null);
 
   const loadTournament = useCallback(async () => {
     try {
@@ -495,37 +495,83 @@ function TournamentDetail({
     };
   }, [tournament?.state, loadTournament]);
 
-  // Poll for live game state when tournament is running
+  // Connect to WebSocket for live game state when tournament is running
   useEffect(() => {
     const isRunning = tournament?.state === 'in_progress' && tournament?.current_match;
 
     if (!isRunning) {
       setLiveGameState(null);
-      if (livePollRef.current) {
-        clearInterval(livePollRef.current);
-        livePollRef.current = null;
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
       }
       return;
     }
 
-    // Fetch immediately
-    fetchLiveGameState(tournamentId).then(setLiveGameState);
+    // Connect to WebSocket if not already connected
+    if (!wsRef.current || wsRef.current.readyState === WebSocket.CLOSED) {
+      const wsUrl = `ws://localhost:8000/ws/fleet-commander/tournament/${tournamentId}?role=spectator`;
+      const ws = new WebSocket(wsUrl);
+      wsRef.current = ws;
 
-    // Poll every 500ms for smooth updates
-    if (!livePollRef.current) {
-      livePollRef.current = window.setInterval(async () => {
-        const state = await fetchLiveGameState(tournamentId);
-        setLiveGameState(state);
-      }, 500);
+      ws.onopen = () => {
+        console.log('WebSocket connected for tournament live updates');
+        // Fetch initial state once connected
+        fetchLiveGameState(tournamentId).then(setLiveGameState);
+      };
+
+      ws.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data);
+
+          if (message.type === 'live_match_update' && message.game_state) {
+            setLiveGameState({
+              turn: message.game_state.turn,
+              phase: message.game_state.phase,
+              current_player: message.game_state.current_player,
+              player1_name: message.game_state.player1_name,
+              player2_name: message.game_state.player2_name,
+              player1_ships: message.game_state.player1_ships,
+              player2_ships: message.game_state.player2_ships,
+              winner: message.game_state.winner,
+            });
+          } else if (message.type === 'live_match_ended') {
+            setLiveGameState(null);
+            // Refresh tournament state to get match result
+            loadTournament();
+          } else if (message.type === 'match_start' || message.type === 'match_end') {
+            // Tournament state changed - refresh
+            loadTournament();
+          }
+        } catch (e) {
+          console.error('Error parsing WebSocket message:', e);
+        }
+      };
+
+      ws.onerror = (error) => {
+        console.error('WebSocket error:', error);
+      };
+
+      ws.onclose = () => {
+        console.log('WebSocket connection closed');
+      };
+
+      // Send ping every 30 seconds to keep connection alive
+      const pingInterval = setInterval(() => {
+        if (ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'ping' }));
+        }
+      }, 30000);
+
+      return () => {
+        clearInterval(pingInterval);
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close();
+        }
+        wsRef.current = null;
+      };
     }
-
-    return () => {
-      if (livePollRef.current) {
-        clearInterval(livePollRef.current);
-        livePollRef.current = null;
-      }
-    };
-  }, [tournament?.state, tournament?.current_match, tournamentId]);
+  }, [tournament?.state, tournament?.current_match, tournamentId, loadTournament]);
 
   const handleRun = async () => {
     if (!tournament) return;

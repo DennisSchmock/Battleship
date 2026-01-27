@@ -711,8 +711,6 @@ export function TournamentMatchViewer({
   const [error, setError] = useState<string | null>(null);
   const [gridSize, setGridSize] = useState<[number, number, number]>([12, 12, 6]);
   const [matchEnded, setMatchEnded] = useState(false);
-  const pollRef = useRef<number | null>(null);
-  const notFoundCountRef = useRef(0);
   const hasReceivedDataRef = useRef(false);
   const lastTurnRef = useRef<number>(-1);
 
@@ -730,116 +728,157 @@ export function TournamentMatchViewer({
 
   // Use live state or replay state depending on mode
   const gameState = mode === 'live' ? liveGameState : replayGameState;
+  const wsRef = useRef<WebSocket | null>(null);
 
-  // Poll for live match state
+  // Connect to WebSocket for live match updates
   useEffect(() => {
     if (mode !== 'live' || !tournamentId) return;
 
-    async function fetchLiveState() {
-      try {
-        const res = await fetch(`${API_BASE}/api/fleet-commander/tournaments/${tournamentId}/live`);
-        if (res.status === 404) {
-          notFoundCountRef.current++;
-          // Only consider match ended if we've received data before AND got multiple 404s
-          // OR if we've been waiting a while without any data
-          if (hasReceivedDataRef.current && notFoundCountRef.current >= 3) {
-            setMatchEnded(true);
-            setLoading(false);
-            if (pollRef.current) {
-              clearInterval(pollRef.current);
-              pollRef.current = null;
-            }
-          } else if (!hasReceivedDataRef.current && notFoundCountRef.current >= 15) {
-            // Waited 3+ seconds without data, match probably ended before we connected
-            setMatchEnded(true);
-            setLoading(false);
-            if (pollRef.current) {
-              clearInterval(pollRef.current);
-              pollRef.current = null;
+    // Helper function to process game state from WebSocket message
+    function processGameState(gameStateData: {
+      turn: number;
+      phase: string;
+      player1_ships: ShipData[];
+      player2_ships: ShipData[];
+      storm: StormData;
+      current_player: number;
+      winner?: number;
+      config?: { grid_size: [number, number, number] };
+      last_turn_result?: {
+        turn: number;
+        player_id: number;
+        actions_taken?: Array<{
+          action?: { type: string; ship_id: string; target?: Position | [number, number, number] };
+          ships_hit?: string[];
+          damage_dealt?: number;
+          ships_destroyed?: string[];
+        }>;
+        storm_damage_taken?: Record<string, number>;
+      };
+    }) {
+      hasReceivedDataRef.current = true;
+
+      setLiveGameState({
+        turn: gameStateData.turn,
+        phase: gameStateData.phase,
+        player1_ships: gameStateData.player1_ships,
+        player2_ships: gameStateData.player2_ships,
+        storm: gameStateData.storm,
+        current_player: gameStateData.current_player,
+        winner: gameStateData.winner,
+      });
+
+      // Process turn result for projectile animations
+      if (gameStateData.last_turn_result && gameStateData.turn !== lastTurnRef.current) {
+        lastTurnRef.current = gameStateData.turn;
+        const turnResult = gameStateData.last_turn_result;
+
+        // Build fire results from actions_taken
+        const fireResults: FireResult[] = [];
+        if (turnResult.actions_taken) {
+          for (const action of turnResult.actions_taken) {
+            if (action.action?.type === 'fire' && action.action?.target) {
+              const target = Array.isArray(action.action.target)
+                ? { x: action.action.target[0], y: action.action.target[1], z: action.action.target[2] || 0 }
+                : action.action.target;
+              fireResults.push({
+                ship_id: action.action.ship_id,
+                target,
+                hit: (action.ships_hit?.length ?? 0) > 0,
+                damage: action.damage_dealt || 0,
+                destroyed_ship: action.ships_destroyed?.[0],
+              });
             }
           }
-          return;
         }
-        if (!res.ok) throw new Error('Failed to fetch live state');
-        const data = await res.json();
 
-        // Reset not found counter and mark that we've received data
-        notFoundCountRef.current = 0;
-        hasReceivedDataRef.current = true;
-
-        setLiveGameState({
-          turn: data.game_state.turn,
-          phase: data.game_state.phase,
-          player1_ships: data.game_state.player1_ships,
-          player2_ships: data.game_state.player2_ships,
-          storm: data.game_state.storm,
-          current_player: data.game_state.current_player,
-          winner: data.game_state.winner,
+        setLiveTurnData({
+          turn: turnResult.turn,
+          player: turnResult.player_id,
+          player_name: turnResult.player_id === 0 ? player1Name : player2Name,
+          fire_results: fireResults,
+          move_results: [],
+          scan_results: [],
+          ability_results: [],
+          ships_destroyed: [],
+          storm_damage_dealt: turnResult.storm_damage_taken || {},
         });
-
-        // Process turn result for projectile animations
-        if (data.game_state.last_turn_result && data.game_state.turn !== lastTurnRef.current) {
-          lastTurnRef.current = data.game_state.turn;
-          const turnResult = data.game_state.last_turn_result;
-
-          // Build fire results from actions_taken
-          const fireResults: FireResult[] = [];
-          if (turnResult.actions_taken) {
-            for (const action of turnResult.actions_taken) {
-              if (action.action?.type === 'fire' && action.action?.target) {
-                const target = Array.isArray(action.action.target)
-                  ? { x: action.action.target[0], y: action.action.target[1], z: action.action.target[2] || 0 }
-                  : action.action.target;
-                fireResults.push({
-                  ship_id: action.action.ship_id,
-                  target,
-                  hit: action.ships_hit?.length > 0,
-                  damage: action.damage_dealt || 0,
-                  destroyed_ship: action.ships_destroyed?.[0],
-                });
-              }
-            }
-          }
-
-          setLiveTurnData({
-            turn: turnResult.turn,
-            player: turnResult.player_id,
-            player_name: turnResult.player_id === 0 ? player1Name : player2Name,
-            fire_results: fireResults,
-            move_results: [],
-            scan_results: [],
-            ability_results: [],
-            ships_destroyed: [],
-            storm_damage_dealt: turnResult.storm_damage_taken || {},
-          });
-        }
-
-        if (data.game_state.config?.grid_size) {
-          setGridSize(data.game_state.config.grid_size);
-        }
-        setError(null);
-        setLoading(false);
-      } catch (e) {
-        // Don't show error on first poll failure - might just be starting
-        if (!loading && hasReceivedDataRef.current) {
-          setError('Lost connection to live match');
-        }
       }
+
+      if (gameStateData.config?.grid_size) {
+        setGridSize(gameStateData.config.grid_size);
+      }
+      setError(null);
+      setLoading(false);
     }
 
-    // Initial fetch
-    fetchLiveState();
+    // Connect to WebSocket
+    const wsUrl = `ws://localhost:8000/ws/fleet-commander/tournament/${tournamentId}?role=spectator`;
+    const ws = new WebSocket(wsUrl);
+    wsRef.current = ws;
 
-    // Poll every 200ms for smooth updates
-    pollRef.current = window.setInterval(fetchLiveState, 200);
+    ws.onopen = () => {
+      console.log('WebSocket connected for live match viewing');
+    };
 
-    return () => {
-      if (pollRef.current) {
-        clearInterval(pollRef.current);
-        pollRef.current = null;
+    ws.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data);
+
+        if (message.type === 'live_match_update' && message.game_state) {
+          processGameState(message.game_state);
+        } else if (message.type === 'live_match_ended') {
+          setMatchEnded(true);
+        } else if (message.type === 'spectator_joined') {
+          // Initial connection - check if there's already a live match
+          // Make a one-time fetch to get current state if available
+          fetch(`${API_BASE}/api/fleet-commander/tournaments/${tournamentId}/live`)
+            .then(res => {
+              if (res.ok) return res.json();
+              return null;
+            })
+            .then(data => {
+              if (data?.game_state) {
+                processGameState(data.game_state);
+              } else {
+                // No live match yet, just wait for WebSocket updates
+                setLoading(false);
+              }
+            })
+            .catch(() => setLoading(false));
+        } else if (message.type === 'pong') {
+          // Ping response, ignore
+        }
+      } catch (e) {
+        console.error('Error parsing WebSocket message:', e);
       }
     };
-  }, [mode, tournamentId, loading]);
+
+    ws.onerror = (error) => {
+      console.error('WebSocket error:', error);
+      setError('WebSocket connection error');
+    };
+
+    ws.onclose = () => {
+      console.log('WebSocket connection closed');
+      // Don't set error on close - might be normal disconnect
+    };
+
+    // Send ping every 30 seconds to keep connection alive
+    const pingInterval = setInterval(() => {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ type: 'ping' }));
+      }
+    }, 30000);
+
+    return () => {
+      clearInterval(pingInterval);
+      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+        ws.close();
+      }
+      wsRef.current = null;
+    };
+  }, [mode, tournamentId, player1Name, player2Name]);
 
   // Load replay
   useEffect(() => {

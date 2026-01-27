@@ -24,10 +24,16 @@ interface ShipData {
 }
 
 interface StormData {
-  min: Position;
-  max: Position;
+  current_bounds?: {
+    min: Position;
+    max: Position;
+  };
+  // Legacy format fallback
+  min?: Position;
+  max?: Position;
   turns_until_shrink: number;
-  damage: number;
+  damage?: number;
+  damage_per_turn?: number;
 }
 
 interface FireResult {
@@ -252,13 +258,22 @@ function StormBoundary({
     }
   });
 
-  const stormWidth = storm.max.x - storm.min.x;
-  const stormDepth = storm.max.y - storm.min.y;
-  const stormHeight = storm.max.z - storm.min.z;
+  // Handle both new format (current_bounds.min/max) and legacy format (min/max directly)
+  const stormMin = storm.current_bounds?.min ?? storm.min;
+  const stormMax = storm.current_bounds?.max ?? storm.max;
 
-  const centerX = (storm.min.x + storm.max.x) / 2 + offset[0];
-  const centerY = (storm.min.y + storm.max.y) / 2 + offset[1];
-  const centerZ = (storm.min.z + storm.max.z) / 2 + offset[2];
+  // Return null if we don't have valid bounds
+  if (!stormMin || !stormMax) {
+    return null;
+  }
+
+  const stormWidth = stormMax.x - stormMin.x;
+  const stormDepth = stormMax.y - stormMin.y;
+  const stormHeight = stormMax.z - stormMin.z;
+
+  const centerX = (stormMin.x + stormMax.x) / 2 + offset[0];
+  const centerY = (stormMin.y + stormMax.y) / 2 + offset[1];
+  const centerZ = (stormMin.z + stormMax.z) / 2 + offset[2];
 
   return (
     <mesh

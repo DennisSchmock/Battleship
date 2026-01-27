@@ -706,6 +706,7 @@ export function TournamentMatchViewer({
 }: TournamentMatchViewerProps) {
   const [replay, setReplay] = useState<ReplayData | null>(null);
   const [liveGameState, setLiveGameState] = useState<GameState | null>(null);
+  const [liveTurnData, setLiveTurnData] = useState<TurnData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [gridSize, setGridSize] = useState<[number, number, number]>([12, 12, 6]);
@@ -713,6 +714,7 @@ export function TournamentMatchViewer({
   const pollRef = useRef<number | null>(null);
   const notFoundCountRef = useRef(0);
   const hasReceivedDataRef = useRef(false);
+  const lastTurnRef = useRef<number>(-1);
 
   const {
     gameState: replayGameState,
@@ -774,6 +776,43 @@ export function TournamentMatchViewer({
           current_player: data.game_state.current_player,
           winner: data.game_state.winner,
         });
+
+        // Process turn result for projectile animations
+        if (data.game_state.last_turn_result && data.game_state.turn !== lastTurnRef.current) {
+          lastTurnRef.current = data.game_state.turn;
+          const turnResult = data.game_state.last_turn_result;
+
+          // Build fire results from actions_taken
+          const fireResults: FireResult[] = [];
+          if (turnResult.actions_taken) {
+            for (const action of turnResult.actions_taken) {
+              if (action.action?.type === 'fire' && action.action?.target) {
+                const target = Array.isArray(action.action.target)
+                  ? { x: action.action.target[0], y: action.action.target[1], z: action.action.target[2] || 0 }
+                  : action.action.target;
+                fireResults.push({
+                  ship_id: action.action.ship_id,
+                  target,
+                  hit: action.ships_hit?.length > 0,
+                  damage: action.damage_dealt || 0,
+                  destroyed_ship: action.ships_destroyed?.[0],
+                });
+              }
+            }
+          }
+
+          setLiveTurnData({
+            turn: turnResult.turn,
+            player: turnResult.player_id,
+            player_name: turnResult.player_id === 0 ? player1Name : player2Name,
+            fire_results: fireResults,
+            move_results: [],
+            scan_results: [],
+            ability_results: [],
+            ships_destroyed: [],
+            storm_damage_dealt: turnResult.storm_damage_taken || {},
+          });
+        }
 
         if (data.game_state.config?.grid_size) {
           setGridSize(data.game_state.config.grid_size);
@@ -943,7 +982,7 @@ export function TournamentMatchViewer({
           >
             <BattleScene
               gameState={gameState}
-              currentTurn={currentTurn}
+              currentTurn={mode === 'live' ? liveTurnData : currentTurn}
               gridSize={gridSize}
               player1Name={player1Name}
               player2Name={player2Name}

@@ -1796,6 +1796,7 @@ async def _run_tournament_match(
             "config": {
                 "grid_size": list(config.grid_size),
             },
+            "last_turn_result": result.to_dict(),
         }
 
         # Delay between turns for watchability (0.3s = ~20 turns visible per 6 seconds)

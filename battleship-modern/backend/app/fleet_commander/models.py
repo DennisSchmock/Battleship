@@ -670,6 +670,16 @@ class ActionResult:
     cells_revealed: Dict[Position, CellStatus] = field(default_factory=dict)
     triggered_mines: List[str] = field(default_factory=list)
 
+    def to_dict(self) -> dict:
+        return {
+            "success": self.success,
+            "action": self.action.to_dict(),
+            "message": self.message,
+            "damage_dealt": self.damage_dealt,
+            "ships_hit": self.ships_hit,
+            "ships_destroyed": self.ships_destroyed,
+        }
+
 
 @dataclass
 class TurnResult:
@@ -679,3 +689,12 @@ class TurnResult:
     actions_taken: List[ActionResult] = field(default_factory=list)
     storm_damage_taken: Dict[str, int] = field(default_factory=dict)  # ship_id -> damage
     storm_shrunk: bool = False
+
+    def to_dict(self) -> dict:
+        return {
+            "player_id": self.player_id,
+            "turn": self.turn,
+            "actions_taken": [a.to_dict() for a in self.actions_taken],
+            "storm_damage_taken": {k: v for k, v in self.storm_damage_taken.items()},
+            "storm_shrunk": self.storm_shrunk,
+        }

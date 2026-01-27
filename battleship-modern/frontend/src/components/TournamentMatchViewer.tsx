@@ -734,6 +734,9 @@ export function TournamentMatchViewer({
   useEffect(() => {
     if (mode !== 'live' || !tournamentId) return;
 
+    // Track if this effect has been cleaned up (important for React Strict Mode)
+    let isCleanedUp = false;
+
     // Helper function to process game state from WebSocket message
     function processGameState(gameStateData: {
       turn: number;
@@ -822,6 +825,9 @@ export function TournamentMatchViewer({
     };
 
     ws.onmessage = (event) => {
+      // Don't process messages if we've been cleaned up (React Strict Mode)
+      if (isCleanedUp) return;
+
       try {
         const message = JSON.parse(event.data);
 
@@ -838,6 +844,8 @@ export function TournamentMatchViewer({
               return null;
             })
             .then(data => {
+              // Check cleanup flag before updating state
+              if (isCleanedUp) return;
               if (data?.game_state) {
                 processGameState(data.game_state);
               } else {
@@ -845,7 +853,9 @@ export function TournamentMatchViewer({
                 setLoading(false);
               }
             })
-            .catch(() => setLoading(false));
+            .catch(() => {
+              if (!isCleanedUp) setLoading(false);
+            });
         } else if (message.type === 'pong') {
           // Ping response, ignore
         }
@@ -855,11 +865,15 @@ export function TournamentMatchViewer({
     };
 
     ws.onerror = (error) => {
+      // Don't show error if this is an intentional cleanup (React Strict Mode)
+      if (isCleanedUp) return;
       console.error('WebSocket error:', error);
       setError('WebSocket connection error');
     };
 
     ws.onclose = () => {
+      // Don't log if this is an intentional cleanup (React Strict Mode)
+      if (isCleanedUp) return;
       console.log('WebSocket connection closed');
       // Don't set error on close - might be normal disconnect
     };
@@ -872,6 +886,7 @@ export function TournamentMatchViewer({
     }, 30000);
 
     return () => {
+      isCleanedUp = true;
       clearInterval(pingInterval);
       if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
         ws.close();

@@ -507,14 +507,23 @@ function useReplayPlayer(replay: ReplayData | null) {
   }, [replay]);
 
   // Initialize game state from replay
+  // Helper to convert positions from tuple to object format
+  const convertShips = useCallback((ships: any[]): ShipData[] =>
+    ships.map(s => ({
+      ...s,
+      positions: s.positions.map((p: any) =>
+        Array.isArray(p) ? { x: p[0], y: p[1], z: p[2] } : p
+      ),
+    })), []);
+
   useEffect(() => {
     if (!replay) return;
 
     setGameState({
       turn: 0,
       phase: 'playing',
-      player1_ships: replay.initial_ships_p1,
-      player2_ships: replay.initial_ships_p2,
+      player1_ships: convertShips(replay.initial_ships_p1),
+      player2_ships: convertShips(replay.initial_ships_p2),
       storm: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: replay.config.grid_size[0], y: replay.config.grid_size[1], z: replay.config.grid_size[2] },
@@ -525,7 +534,7 @@ function useReplayPlayer(replay: ReplayData | null) {
     });
     setCurrentTurnIndex(0);
     setCurrentTurn(null);
-  }, [replay]);
+  }, [replay, convertShips]);
 
   // Apply turn result to update game state
   const applyTurnResult = useCallback((event: ReplayEvent) => {
@@ -550,8 +559,8 @@ function useReplayPlayer(replay: ReplayData | null) {
       setGameState(prev => ({
         ...prev!,
         turn: data.game_state!.turn,
-        player1_ships: data.game_state!.player1_ships,
-        player2_ships: data.game_state!.player2_ships,
+        player1_ships: convertShips(data.game_state!.player1_ships),
+        player2_ships: convertShips(data.game_state!.player2_ships),
         storm: data.game_state!.storm || prev!.storm,
         winner: data.game_state!.winner,
         current_player: event.player_id,
@@ -586,7 +595,7 @@ function useReplayPlayer(replay: ReplayData | null) {
       ships_destroyed: [],
       storm_damage_dealt: {},
     });
-  }, [replay]);
+  }, [replay, convertShips]);
 
   // Playback loop
   useEffect(() => {
@@ -625,8 +634,8 @@ function useReplayPlayer(replay: ReplayData | null) {
     let state: GameState = {
       turn: 0,
       phase: 'playing',
-      player1_ships: replay.initial_ships_p1,
-      player2_ships: replay.initial_ships_p2,
+      player1_ships: convertShips(replay.initial_ships_p1),
+      player2_ships: convertShips(replay.initial_ships_p2),
       storm: {
         min: { x: 0, y: 0, z: 0 },
         max: { x: replay.config.grid_size[0], y: replay.config.grid_size[1], z: replay.config.grid_size[2] },
@@ -653,8 +662,8 @@ function useReplayPlayer(replay: ReplayData | null) {
         state = {
           ...state,
           turn: data.game_state.turn,
-          player1_ships: data.game_state.player1_ships,
-          player2_ships: data.game_state.player2_ships,
+          player1_ships: convertShips(data.game_state.player1_ships),
+          player2_ships: convertShips(data.game_state.player2_ships),
           storm: data.game_state.storm || state.storm,
           winner: data.game_state.winner,
           current_player: event.player_id,
@@ -666,7 +675,7 @@ function useReplayPlayer(replay: ReplayData | null) {
     setGameState(state);
     setCurrentTurnIndex(turnIndex);
     applyTurnResult(turnEvents[turnIndex]);
-  }, [replay, turnEvents, applyTurnResult]);
+  }, [replay, turnEvents, applyTurnResult, convertShips]);
 
   return {
     gameState,
@@ -761,11 +770,20 @@ export function TournamentMatchViewer({
     }) {
       hasReceivedDataRef.current = true;
 
+      // Convert positions from tuple format [x, y, z] to object format {x, y, z}
+      const convertShips = (ships: any[]): ShipData[] =>
+        ships.map(s => ({
+          ...s,
+          positions: s.positions.map((p: any) =>
+            Array.isArray(p) ? { x: p[0], y: p[1], z: p[2] } : p
+          ),
+        }));
+
       setLiveGameState({
         turn: gameStateData.turn,
         phase: gameStateData.phase,
-        player1_ships: gameStateData.player1_ships,
-        player2_ships: gameStateData.player2_ships,
+        player1_ships: convertShips(gameStateData.player1_ships),
+        player2_ships: convertShips(gameStateData.player2_ships),
         storm: gameStateData.storm,
         current_player: gameStateData.current_player,
         winner: gameStateData.winner,
@@ -888,7 +906,8 @@ export function TournamentMatchViewer({
     return () => {
       isCleanedUp = true;
       clearInterval(pingInterval);
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      // Only close if already OPEN to avoid browser warning about closing during CONNECTING
+      if (ws.readyState === WebSocket.OPEN) {
         ws.close();
       }
       wsRef.current = null;

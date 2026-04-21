@@ -491,6 +491,9 @@ function TournamentDetail({
       return;
     }
 
+    // Track if this effect has been cleaned up (for React Strict Mode)
+    let isCleanedUp = false;
+
     const wsUrl = `ws://localhost:8000/ws/fleet-commander/tournament/${tournamentId}?role=spectator`;
     const ws = new WebSocket(wsUrl);
     wsRef.current = ws;
@@ -501,6 +504,9 @@ function TournamentDetail({
     };
 
     ws.onmessage = (event) => {
+      // Don't process messages if we've been cleaned up (React Strict Mode)
+      if (isCleanedUp) return;
+
       try {
         const message = JSON.parse(event.data);
 
@@ -529,11 +535,15 @@ function TournamentDetail({
     };
 
     ws.onerror = (error) => {
+      // Don't show error if this is an intentional cleanup (React Strict Mode)
+      if (isCleanedUp) return;
       console.error('WebSocket error:', error);
       wsConnectedRef.current = false;
     };
 
     ws.onclose = () => {
+      // Don't log if this is an intentional cleanup (React Strict Mode)
+      if (isCleanedUp) return;
       console.log('WebSocket connection closed');
       wsConnectedRef.current = false;
       wsRef.current = null;
@@ -547,9 +557,11 @@ function TournamentDetail({
     }, 30000);
 
     return () => {
+      isCleanedUp = true;
       clearInterval(pingInterval);
       wsConnectedRef.current = false;
-      if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+      // Only close if already OPEN to avoid browser warning about closing during CONNECTING
+      if (ws.readyState === WebSocket.OPEN) {
         ws.close();
       }
       wsRef.current = null;

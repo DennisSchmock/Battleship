@@ -3,7 +3,7 @@
 Uses different strategies based on ship type.
 Uses AP system to combine move + attack when beneficial.
 """
-import random
+import random as stdlib_random
 from typing import List, Tuple, Optional, Set, Dict
 
 from ..bot_interface import (
@@ -40,11 +40,13 @@ class TacticalBot(FleetBot):
         self.config = config
         self.enemy_last_seen = {}
 
-    def place_fleet(self, config: GameConfig, zone_x_min: int, zone_x_max: int
+    def place_fleet(self, config: GameConfig, zone_x_min: int, zone_x_max: int,
+                    rng: 'stdlib_random.Random | None' = None,
                     ) -> List[Tuple[ShipType, Position, Direction]]:
-        return random_fleet_placement(config, zone_x_min, zone_x_max)
+        return random_fleet_placement(config, zone_x_min, zone_x_max, rng=rng)
 
-    def get_actions(self, view: GameView) -> List[Action]:
+    def get_actions(self, view: GameView, rng: 'stdlib_random.Random | None' = None,
+                    ) -> List[Action]:
         actions = []
 
         # Track enemy positions

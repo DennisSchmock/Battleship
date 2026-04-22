@@ -256,10 +256,12 @@ class FleetCommanderTournament:
             and self.all_participants_ready()
         )
 
-    def start(self) -> bool:
+    def start(self, rng: 'random.Random | None' = None) -> bool:
         """Start the tournament."""
         if not self.can_start():
             return False
+
+        self._rng = rng or random
 
         self.state = TournamentState.STARTING
         self.started_at = datetime.now()
@@ -315,7 +317,7 @@ class FleetCommanderTournament:
     def _generate_bracket_matches(self):
         """Generate single-elimination bracket."""
         participants = list(self.participants.keys())
-        random.shuffle(participants)
+        self._rng.shuffle(participants)
 
         # Pad to power of 2
         bracket_size = 1

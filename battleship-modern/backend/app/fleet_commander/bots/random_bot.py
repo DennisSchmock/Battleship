@@ -2,7 +2,7 @@
 
 Takes random actions - useful as a baseline to compare other bots against.
 """
-import random
+import random as stdlib_random
 from typing import List, Tuple, Optional
 
 from ..bot_interface import (
@@ -32,41 +32,41 @@ class RandomBot(FleetBot):
     def on_game_start(self, config: GameConfig) -> None:
         self.config = config
 
-    def place_fleet(self, config: GameConfig, zone_x_min: int, zone_x_max: int
+    def place_fleet(self, config: GameConfig, zone_x_min: int, zone_x_max: int,
+                    rng: 'stdlib_random.Random | None' = None,
                     ) -> List[Tuple[ShipType, Position, Direction]]:
-        return random_fleet_placement(config, zone_x_min, zone_x_max)
+        return random_fleet_placement(config, zone_x_min, zone_x_max, rng=rng)
 
-    def get_actions(self, view: GameView) -> List[Action]:
+    def get_actions(self, view: GameView, rng: 'stdlib_random.Random | None' = None,
+                    ) -> List[Action]:
+        _rng = rng or stdlib_random
         actions = []
 
-        # Each ship that hasn't acted gets one action
         ships_to_act = view.get_ships_that_can_act()
-        random.shuffle(ships_to_act)
+        _rng.shuffle(ships_to_act)
 
         for ship in ships_to_act:
-            # Pick random action type (bias toward move)
-            action_type = random.choice(['fire', 'move', 'move'])
+            action_type = _rng.choice(['fire', 'move', 'move'])
 
             action = None
 
             if action_type == 'fire':
-                action = self._random_fire(ship, view)
+                action = self._random_fire(ship, view, _rng)
             elif action_type == 'move':
-                action = self._random_move(ship, view)
+                action = self._random_move(ship, view, _rng)
 
-            # If chosen action failed, try the other
             if not action:
                 if action_type == 'fire':
-                    action = self._random_move(ship, view)
+                    action = self._random_move(ship, view, _rng)
                 else:
-                    action = self._random_fire(ship, view)
+                    action = self._random_fire(ship, view, _rng)
 
             if action:
                 actions.append(action)
 
         return actions
 
-    def _random_fire(self, ship: VisibleShip, view: GameView) -> Optional[FireAction]:
+    def _random_fire(self, ship: VisibleShip, view: GameView, rng) -> Optional[FireAction]:
         """Fire at a random valid position."""
         if not ship.can_fire():
             return None
@@ -75,20 +75,18 @@ class RandomBot(FleetBot):
         if fire_range == 0:
             return None
 
-        # Try to hit visible enemies first
         if view.visible_enemy_ships:
-            enemy = random.choice(view.visible_enemy_ships)
+            enemy = rng.choice(view.visible_enemy_ships)
             if enemy.positions:
-                target = random.choice(enemy.positions)
+                target = rng.choice(enemy.positions)
                 if ship.center.distance_to(target) <= fire_range:
                     return FireAction(ship_id=ship.id, target=target)
 
-        # Otherwise fire randomly within range
         for _ in range(20):
             target = Position(
-                ship.center.x + random.randint(-fire_range, fire_range),
-                ship.center.y + random.randint(-fire_range, fire_range),
-                ship.center.z + random.randint(-fire_range, fire_range)
+                ship.center.x + rng.randint(-fire_range, fire_range),
+                ship.center.y + rng.randint(-fire_range, fire_range),
+                ship.center.z + rng.randint(-fire_range, fire_range)
             )
 
             if not view.is_valid_position(target):
@@ -102,12 +100,11 @@ class RandomBot(FleetBot):
 
         return None
 
-    def _random_move(self, ship: VisibleShip, view: GameView) -> Optional[MoveAction]:
+    def _random_move(self, ship: VisibleShip, view: GameView, rng) -> Optional[MoveAction]:
         """Move in a random valid direction."""
         if not ship.can_move():
             return None
 
-        # Get valid directions
         valid_dirs = []
         for direction in Direction:
             new_pos = ship.center.move(direction)
@@ -115,7 +112,7 @@ class RandomBot(FleetBot):
                 valid_dirs.append(direction)
 
         if valid_dirs:
-            direction = random.choice(valid_dirs)
+            direction = rng.choice(valid_dirs)
             return MoveAction(ship_id=ship.id, path=[ship.center.move(direction)])
 
         return None

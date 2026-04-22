@@ -510,6 +510,9 @@ class GameConfig:
     # Victory conditions
     max_turns: int = 500  # Allow long games
 
+    # Deterministic seeding (None = non-deterministic)
+    seed: Optional[int] = None
+
     @classmethod
     def small(cls) -> 'GameConfig':
         """Smaller config for faster games."""

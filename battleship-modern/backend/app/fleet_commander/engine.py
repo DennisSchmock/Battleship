@@ -45,6 +45,12 @@ class FleetCommanderGame:
 
     def __post_init__(self):
         """Initialize the game."""
+        # Initialize seeded RNG
+        if self.config.seed is not None:
+            self.rng = random.Random(self.config.seed)
+        else:
+            self.rng = random.Random()
+
         # Create players
         self.players = [
             PlayerState(player_id=0, name="Player 1"),
@@ -146,11 +152,11 @@ class FleetCommanderGame:
             for _ in range(1000):  # Max attempts
                 # Random start position in zone
                 start = Position(
-                    random.randint(zone_min, zone_max),
-                    random.randint(0, y_max - 1),
-                    random.randint(0, z_max - 1)
+                    self.rng.randint(zone_min, zone_max),
+                    self.rng.randint(0, y_max - 1),
+                    self.rng.randint(0, z_max - 1)
                 )
-                direction = random.choice(list(Direction))
+                direction = self.rng.choice(list(Direction))
 
                 # Calculate positions
                 positions = [start]
@@ -587,7 +593,7 @@ class FleetCommanderGame:
                         if target_ship and target_ship.owner != player.player_id:
                             # Check stealth
                             if target_ship.config.stealth > 0 and not is_anti_stealth:
-                                if random.random() < target_ship.config.stealth:
+                                if self.rng.random() < target_ship.config.stealth:
                                     status = CellStatus.EMPTY  # Stealth success
                                 else:
                                     status = CellStatus.SHIP

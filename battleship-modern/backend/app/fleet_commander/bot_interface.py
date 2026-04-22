@@ -253,7 +253,8 @@ class FleetBot(ABC):
         pass
 
     @abstractmethod
-    def place_fleet(self, config: GameConfig, zone_x_min: int, zone_x_max: int
+    def place_fleet(self, config: GameConfig, zone_x_min: int, zone_x_max: int,
+                    rng: 'random.Random | None' = None,
                     ) -> List[Tuple[ShipType, Position, Direction]]:
         """
         Place your fleet in your starting zone.
@@ -262,6 +263,7 @@ class FleetBot(ABC):
             config: Game configuration
             zone_x_min: Minimum X coordinate of your zone
             zone_x_max: Maximum X coordinate of your zone
+            rng: Optional seeded RNG for deterministic placement
 
         Returns:
             List of (ship_type, start_position, direction) for each ship
@@ -269,12 +271,14 @@ class FleetBot(ABC):
         pass
 
     @abstractmethod
-    def get_actions(self, view: GameView) -> List[Action]:
+    def get_actions(self, view: GameView, rng: 'random.Random | None' = None,
+                    ) -> List[Action]:
         """
         Decide what actions to take this turn.
 
         Args:
             view: Current game state from your perspective
+            rng: Optional seeded RNG for deterministic decisions
 
         Returns:
             List of actions to execute
@@ -313,9 +317,11 @@ class FleetBot(ABC):
 def random_fleet_placement(
     config: GameConfig,
     zone_x_min: int,
-    zone_x_max: int
+    zone_x_max: int,
+    rng: 'random.Random | None' = None,
 ) -> List[Tuple[ShipType, Position, Direction]]:
     """Helper to randomly place a fleet."""
+    _rng = rng or random
     placements = []
     occupied: Set[Position] = set()
     y_max, z_max = config.grid_size[1], config.grid_size[2]
@@ -326,11 +332,11 @@ def random_fleet_placement(
 
         for _ in range(1000):
             start = Position(
-                random.randint(zone_x_min, zone_x_max),
-                random.randint(0, y_max - 1),
-                random.randint(0, z_max - 1)
+                _rng.randint(zone_x_min, zone_x_max),
+                _rng.randint(0, y_max - 1),
+                _rng.randint(0, z_max - 1)
             )
-            direction = random.choice(list(Direction))
+            direction = _rng.choice(list(Direction))
 
             # Calculate positions
             positions = [start]

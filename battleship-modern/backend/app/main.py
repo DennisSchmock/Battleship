@@ -1,679 +1,13 @@
-"""FastAPI application for Battleship tournament."""
+"""Fleet Commander Tournament Server."""
 import asyncio
 from contextlib import asynccontextmanager
 from typing import List, Optional, Tuple
 import json
+import logging
 
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
-from .api.tournament import (
-    Tournament,
-    AsyncTournament,
-    TournamentFormat,
-    create_player,
-    AI_PLAYER_REGISTRY,
-)
-from .game.game import BattleshipGame
-from .game.game3d import SpaceBattleshipGame
-from .game.player import Player, AIPlayer, HunterAIPlayer
-from .game.player3d import RandomPlayer3D, HunterAI3D, SmartHunter3D
-from .game.ship3d import Ship3D
-
-
-# Store active tournaments and connections
-tournaments: dict[str, AsyncTournament] = {}
-connections: dict[str, List[WebSocket]] = {}
-
-
-@asynccontextmanager
-async def lifespan(app: FastAPI):
-    """Lifecycle manager for the application."""
-    print("🚢 Battleship Tournament Server starting...")
-    yield
-    print("🚢 Battleship Tournament Server shutting down...")
-
-
-app = FastAPI(
-    title="Battleship AI Tournament",
-    description="A modern Battleship game with ML-powered AI players",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-# CORS for frontend
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-
-# Pydantic models
-class PlayerConfig(BaseModel):
-    name: str
-    type: str  # "random", "hunter", "rl"
-    model_path: Optional[str] = None
-
-
-class TournamentConfig(BaseModel):
-    name: str
-    format: str = "round_robin"
-    games_per_match: int = 3
-    players: List[PlayerConfig]
-
-
-class QuickGameConfig(BaseModel):
-    player1_type: str = "hunter"
-    player2_type: str = "random"
-
-
-# REST API endpoints
-@app.get("/")
-async def root():
-    """Health check endpoint."""
-    return {"status": "ok", "message": "Battleship Tournament Server"}
-
-
-@app.get("/api/player-types")
-async def get_player_types():
-    """Get available AI player types."""
-    return {
-        "types": [
-            {"id": "random", "name": "Random AI", "description": "Shoots randomly"},
-            {"id": "hunter", "name": "Hunter AI", "description": "Hunts ships after hitting"},
-            {"id": "adaptive", "name": "Adaptive Hunter", "description": "Learns opponent patterns across rounds"},
-            {"id": "rl", "name": "RL Agent", "description": "Reinforcement Learning trained AI"},
-        ]
-    }
-
-
-@app.post("/api/tournaments")
-async def create_tournament(config: TournamentConfig):
-    """Create a new tournament."""
-    tournament = AsyncTournament(
-        name=config.name,
-        format=TournamentFormat(config.format),
-        games_per_match=config.games_per_match,
-    )
-
-    for player_config in config.players:
-        kwargs = {}
-        if player_config.model_path:
-            kwargs["model_path"] = player_config.model_path
-
-        player = create_player(
-            player_config.type,
-            player_config.name,
-            **kwargs
-        )
-        tournament.add_player(player)
-
-    tournaments[config.name] = tournament
-    connections[config.name] = []
-
-    return {"tournament_id": config.name, "status": "created"}
-
-
-@app.get("/api/tournaments/{tournament_id}")
-async def get_tournament(tournament_id: str):
-    """Get tournament status and leaderboard."""
-    if tournament_id not in tournaments:
-        raise HTTPException(status_code=404, detail="Tournament not found")
-
-    return tournaments[tournament_id].to_dict()
-
-
-@app.post("/api/tournaments/{tournament_id}/start")
-async def start_tournament(tournament_id: str):
-    """Start a tournament (non-blocking, use WebSocket for updates)."""
-    if tournament_id not in tournaments:
-        raise HTTPException(status_code=404, detail="Tournament not found")
-
-    tournament = tournaments[tournament_id]
-
-    if tournament.is_running:
-        raise HTTPException(status_code=400, detail="Tournament already running")
-
-    # Run tournament in background
-    asyncio.create_task(_run_tournament(tournament_id))
-
-    return {"status": "started"}
-
-
-async def _run_tournament(tournament_id: str):
-    """Background task to run tournament and broadcast updates."""
-    tournament = tournaments[tournament_id]
-
-    # Run the tournament
-    asyncio.create_task(tournament.run_round_robin_async())
-
-    # Broadcast events to connected clients
-    while tournament.is_running or not tournament._event_queue.empty():
-        try:
-            event = await asyncio.wait_for(tournament.get_event(), timeout=1.0)
-            await broadcast(tournament_id, event)
-        except asyncio.TimeoutError:
-            continue
-
-
-async def broadcast(tournament_id: str, message: dict):
-    """Broadcast message to all connected clients for a tournament."""
-    if tournament_id not in connections:
-        return
-
-    dead_connections = []
-    for websocket in connections[tournament_id]:
-        try:
-            await websocket.send_json(message)
-        except Exception:
-            dead_connections.append(websocket)
-
-    # Remove dead connections
-    for ws in dead_connections:
-        connections[tournament_id].remove(ws)
-
-
-@app.post("/api/quick-game")
-async def quick_game(config: QuickGameConfig):
-    """Play a quick game between two AIs and return the result."""
-    player1 = create_player(config.player1_type, f"Player 1 ({config.player1_type})")
-    player2 = create_player(config.player2_type, f"Player 2 ({config.player2_type})")
-
-    game = BattleshipGame(player1=player1, player2=player2)
-    winner = game.play_full_game()
-
-    return {
-        "winner": winner.name,
-        "total_turns": game.turn_count,
-        "replay": game.get_full_replay(),
-    }
-
-
-# WebSocket endpoint for real-time updates
-@app.websocket("/ws/tournament/{tournament_id}")
-async def tournament_websocket(websocket: WebSocket, tournament_id: str):
-    """WebSocket connection for tournament updates."""
-    await websocket.accept()
-
-    if tournament_id not in connections:
-        connections[tournament_id] = []
-
-    connections[tournament_id].append(websocket)
-
-    try:
-        # Send current state
-        if tournament_id in tournaments:
-            await websocket.send_json({
-                "type": "state",
-                "data": tournaments[tournament_id].to_dict()
-            })
-
-        # Keep connection alive and handle incoming messages
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-
-            if message.get("type") == "ping":
-                await websocket.send_json({"type": "pong"})
-
-    except WebSocketDisconnect:
-        if tournament_id in connections:
-            connections[tournament_id].remove(websocket)
-
-
-@app.websocket("/ws/game")
-async def game_websocket(websocket: WebSocket):
-    """WebSocket for watching a single game in real-time."""
-    await websocket.accept()
-
-    try:
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-
-            if message.get("action") == "start_game":
-                p1_type = message.get("player1_type", "hunter")
-                p2_type = message.get("player2_type", "random")
-
-                player1 = create_player(p1_type, f"Player 1 ({p1_type})")
-                player2 = create_player(p2_type, f"Player 2 ({p2_type})")
-
-                game = BattleshipGame(player1=player1, player2=player2)
-                game.setup()
-
-                # Send initial state
-                await websocket.send_json({
-                    "type": "game_start",
-                    "data": game.get_game_state()
-                })
-
-                # Play game turn by turn
-                while game.state.value == "playing":
-                    event = game.play_turn()
-
-                    await websocket.send_json({
-                        "type": "turn",
-                        "data": {
-                            "event": event.to_dict(),
-                            "state": game.get_game_state()
-                        }
-                    })
-
-                    # Small delay for visualization
-                    await asyncio.sleep(0.3)
-
-                # Send final state
-                await websocket.send_json({
-                    "type": "game_end",
-                    "data": {
-                        "winner": game.winner.name if game.winner else None,
-                        "replay": game.get_full_replay()
-                    }
-                })
-
-    except WebSocketDisconnect:
-        pass
-
-
-def create_3d_player(player_type: str, name: str):
-    """Factory function to create 3D AI players."""
-    if player_type == "random3d":
-        return RandomPlayer3D(name=name)
-    elif player_type == "hunter3d":
-        return HunterAI3D(name=name)
-    elif player_type == "smart3d":
-        return SmartHunter3D(name=name)
-    else:
-        return RandomPlayer3D(name=name)
-
-
-@app.websocket("/ws/space-game")
-async def space_game_websocket(websocket: WebSocket):
-    """WebSocket for watching a 3D SpaceBattleship game in real-time."""
-    await websocket.accept()
-
-    try:
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-
-            if message.get("action") == "start_game":
-                p1_type = message.get("player1_type", "smart3d")
-                p2_type = message.get("player2_type", "random3d")
-                delay = message.get("delay", 300) / 1000.0  # Convert ms to seconds
-
-                player1 = create_3d_player(p1_type, f"Player 1 ({p1_type})")
-                player2 = create_3d_player(p2_type, f"Player 2 ({p2_type})")
-
-                game = SpaceBattleshipGame(player1=player1, player2=player2)
-                game.setup()
-
-                # Send initial state
-                await websocket.send_json({
-                    "type": "game_start",
-                    "data": game.get_game_state()
-                })
-
-                # Play game turn by turn
-                while game.state.value == "playing":
-                    event = game.play_turn()
-
-                    await websocket.send_json({
-                        "type": "turn",
-                        "data": {
-                            "event": event.to_dict(),
-                            "state": game.get_game_state()
-                        }
-                    })
-
-                    # Delay for visualization
-                    await asyncio.sleep(delay)
-
-                # Send final state
-                await websocket.send_json({
-                    "type": "game_end",
-                    "data": {
-                        "winner": game.winner.name if game.winner else None,
-                        "replay": game.get_full_replay()
-                    }
-                })
-
-    except WebSocketDisconnect:
-        pass
-
-
-def get_ship_positions(player: Player) -> List[Tuple[int, int]]:
-    """Extract all ship positions from a player's board."""
-    positions = []
-    for ship in player.board.ships:
-        positions.extend(ship.get_coordinates())
-    return positions
-
-
-@app.websocket("/ws/match")
-async def match_websocket(websocket: WebSocket):
-    """WebSocket for multi-round match between two AIs."""
-    await websocket.accept()
-
-    try:
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-
-            if message.get("action") == "start_match":
-                p1_type = message.get("player1_type", "hunter")
-                p2_type = message.get("player2_type", "random")
-                num_rounds = message.get("rounds", 50)
-                delay = message.get("delay", 100) / 1000.0
-
-                p1_name = f"{p1_type.title()}"
-                p2_name = f"{p2_type.title()}"
-
-                # Create players ONCE - they persist across rounds for learning
-                player1 = create_player(p1_type, p1_name)
-                player2 = create_player(p2_type, p2_name)
-
-                # Track overall stats
-                p1_wins = 0
-                p2_wins = 0
-                results = []
-
-                await websocket.send_json({
-                    "type": "match_start",
-                    "data": {
-                        "player1": p1_name,
-                        "player2": p2_name,
-                        "total_rounds": num_rounds
-                    }
-                })
-
-                for round_num in range(1, num_rounds + 1):
-                    # Signal start of new round for adaptive players
-                    if hasattr(player1, 'start_new_round'):
-                        player1.start_new_round()
-                    if hasattr(player2, 'start_new_round'):
-                        player2.start_new_round()
-
-                    # Play the full game (setup() will call reset() and place_ships())
-                    game = BattleshipGame(player1=player1, player2=player2)
-                    winner = game.play_full_game()
-
-                    # Calculate stats BEFORE recording round result (which might happen before next reset)
-                    p1_shots = len(player1.shots_fired)
-                    p2_shots = len(player2.shots_fired)
-                    p1_hits = len(player1.hits)
-                    p2_hits = len(player2.hits)
-
-                    # Get ship positions for learning
-                    p1_ship_positions = get_ship_positions(player1)
-                    p2_ship_positions = get_ship_positions(player2)
-
-                    # Determine winner
-                    if winner.name == p1_name:
-                        p1_wins += 1
-                        winner_name = p1_name
-                        p1_won, p2_won = True, False
-                    else:
-                        p2_wins += 1
-                        winner_name = p2_name
-                        p1_won, p2_won = False, True
-
-                    # Record round results for learning
-                    # Player1 learns from player2's behavior
-                    if hasattr(player1, 'record_round_result'):
-                        player1.record_round_result(
-                            won=p1_won,
-                            enemy_shots=list(player2.shots_fired),
-                            enemy_ship_positions=p2_ship_positions
-                        )
-                    # Player2 learns from player1's behavior
-                    if hasattr(player2, 'record_round_result'):
-                        player2.record_round_result(
-                            won=p2_won,
-                            enemy_shots=list(player1.shots_fired),
-                            enemy_ship_positions=p1_ship_positions
-                        )
-
-                    round_result = {
-                        "round": round_num,
-                        "winner": winner_name,
-                        "turns": game.turn_count,
-                        "p1_shots": p1_shots,
-                        "p1_hits": p1_hits,
-                        "p1_accuracy": round(p1_hits / p1_shots * 100, 1) if p1_shots > 0 else 0,
-                        "p2_shots": p2_shots,
-                        "p2_hits": p2_hits,
-                        "p2_accuracy": round(p2_hits / p2_shots * 100, 1) if p2_shots > 0 else 0,
-                    }
-                    results.append(round_result)
-
-                    # Send round result
-                    await websocket.send_json({
-                        "type": "round_end",
-                        "data": {
-                            "result": round_result,
-                            "standings": {
-                                "p1_wins": p1_wins,
-                                "p2_wins": p2_wins,
-                                "rounds_played": round_num
-                            }
-                        }
-                    })
-
-                    await asyncio.sleep(delay)
-
-                # Send final match result
-                await websocket.send_json({
-                    "type": "match_end",
-                    "data": {
-                        "winner": p1_name if p1_wins > p2_wins else p2_name if p2_wins > p1_wins else "Tie",
-                        "p1_wins": p1_wins,
-                        "p2_wins": p2_wins,
-                        "results": results
-                    }
-                })
-
-    except WebSocketDisconnect:
-        pass
-
-
-# === STRATEGIC SPACEBATTLESHIP v2 ===
-
-from .strategic import (
-    GameConfig, Position, Direction,
-    FireAction, MoveAction, ScanAction,
-    CellStatus
-)
-from .strategic.engine import StrategicGame, GamePhase
-from .strategic.bots import RandomBot, HunterBot, ScoutBot, EvasiveBot, PredictorBot
-
-STRATEGIC_BOTS = {
-    "random": RandomBot,
-    "hunter": HunterBot,
-    "scout": ScoutBot,
-    "evasive": EvasiveBot,
-    "predictor": PredictorBot,
-}
-
-
-@app.get("/api/strategic/bot-types")
-async def get_strategic_bot_types():
-    """Get available strategic bot types."""
-    return {
-        "types": [
-            {"id": "random", "name": "Random Bot", "description": "Random actions - baseline"},
-            {"id": "hunter", "name": "Hunter Bot", "description": "Checkerboard search + hunt mode"},
-            {"id": "scout", "name": "Scout Bot", "description": "Scan-heavy reconnaissance"},
-            {"id": "evasive", "name": "Evasive Bot", "description": "Moves ships to avoid destruction"},
-            {"id": "predictor", "name": "Predictor Bot", "description": "Predicts movements + learns patterns"},
-        ]
-    }
-
-
-@app.websocket("/ws/strategic-game")
-async def strategic_game_websocket(websocket: WebSocket):
-    """WebSocket for Strategic SpaceBattleship with Fire/Move/Scan actions."""
-    await websocket.accept()
-
-    try:
-        while True:
-            data = await websocket.receive_text()
-            message = json.loads(data)
-
-            if message.get("action") == "start_game":
-                p1_type = message.get("player1_type", "hunter")
-                p2_type = message.get("player2_type", "random")
-                delay = message.get("delay", 300) / 1000.0
-                use_small_grid = message.get("small_grid", False)
-
-                # Create config
-                config = GameConfig.small() if use_small_grid else GameConfig.standard()
-
-                # Create bots
-                bot1_class = STRATEGIC_BOTS.get(p1_type, HunterBot)
-                bot2_class = STRATEGIC_BOTS.get(p2_type, RandomBot)
-                bot1 = bot1_class()
-                bot2 = bot2_class()
-
-                # Initialize bots
-                bot1.on_game_start(config)
-                bot2.on_game_start(config)
-
-                # Create game
-                game = StrategicGame(config=config)
-
-                # Get ship placements
-                placements1 = bot1.place_ships(config)
-                placements2 = bot2.place_ships(config)
-
-                def convert_placements(placements, ships_config):
-                    result = []
-                    for i, (pos, direction) in enumerate(placements):
-                        ship_name, ship_size = ships_config[i]
-                        result.append((f"{ship_name.lower()}_{i}", pos, direction))
-                    return result
-
-                game.setup_player_ships(game.player1, convert_placements(placements1, config.ships))
-                game.setup_player_ships(game.player2, convert_placements(placements2, config.ships))
-                game.player1.name = bot1.get_name()
-                game.player2.name = bot2.get_name()
-                game.start_game()
-
-                # Send initial state
-                await websocket.send_json({
-                    "type": "game_start",
-                    "data": {
-                        "config": {
-                            "grid_size": config.grid_size,
-                            "actions_per_turn": config.actions_per_turn,
-                        },
-                        "player1": {
-                            "name": game.player1.name,
-                            "ships": [{"id": s.id, "name": s.name, "size": s.size,
-                                      "positions": [p.to_tuple() for p in s.positions]}
-                                     for s in game.player1.ships]
-                        },
-                        "player2": {
-                            "name": game.player2.name,
-                            "ships": [{"id": s.id, "name": s.name, "size": s.size,
-                                      "positions": [p.to_tuple() for p in s.positions]}
-                                     for s in game.player2.ships]
-                        }
-                    }
-                })
-
-                bots = [bot1, bot2]
-                max_turns = 300
-
-                # Play game turn by turn
-                while game.phase == GamePhase.PLAYING and game.turn < max_turns:
-                    current_bot = bots[game.current_player_idx]
-                    current_player = game.current_player
-                    opponent = game.opponent
-
-                    # Get game state for current player
-                    state = game.get_game_state(current_player)
-
-                    # Get actions from bot
-                    actions = current_bot.get_actions(state)
-
-                    # Execute actions
-                    result = game.execute_turn(actions)
-
-                    # Notify bot of results
-                    current_bot.on_turn_result(result)
-
-                    # Send turn update
-                    await websocket.send_json({
-                        "type": "turn",
-                        "data": {
-                            "turn": game.turn,
-                            "player": current_player.name,
-                            "actions": [a.to_dict() for a in actions],
-                            "results": {
-                                "fires": [{"target": r.target.to_tuple(), "hit": r.hit,
-                                          "destroyed": r.destroyed_ship} for r in result.fire_results],
-                                "moves": [{"ship": r.ship_id, "success": r.success,
-                                          "new_positions": [p.to_tuple() for p in r.new_positions] if r.new_positions else None}
-                                         for r in result.move_results],
-                                "scans": [{"center": r.center.to_tuple(),
-                                          "revealed": {str(p.to_tuple()): s.value for p, s in r.revealed.items()}}
-                                         for r in result.scan_results]
-                            },
-                            "state": {
-                                "player1": {
-                                    "ships": [{"id": s.id, "name": s.name, "health": s.health,
-                                              "positions": [p.to_tuple() for p in s.positions],
-                                              "is_destroyed": s.is_destroyed}
-                                             for s in game.player1.ships]
-                                },
-                                "player2": {
-                                    "ships": [{"id": s.id, "name": s.name, "health": s.health,
-                                              "positions": [p.to_tuple() for p in s.positions],
-                                              "is_destroyed": s.is_destroyed}
-                                             for s in game.player2.ships]
-                                }
-                            }
-                        }
-                    })
-
-                    # End turn
-                    game.end_turn()
-
-                    await asyncio.sleep(delay)
-
-                # Determine winner
-                if game.winner:
-                    winner = game.winner
-                elif game.player1.all_ships_destroyed():
-                    winner = game.player2.name
-                elif game.player2.all_ships_destroyed():
-                    winner = game.player1.name
-                else:
-                    p1_ships = sum(1 for s in game.player1.ships if not s.is_destroyed)
-                    p2_ships = sum(1 for s in game.player2.ships if not s.is_destroyed)
-                    winner = game.player1.name if p1_ships > p2_ships else game.player2.name if p2_ships > p1_ships else "Draw"
-
-                # Send final state
-                await websocket.send_json({
-                    "type": "game_end",
-                    "data": {
-                        "winner": winner,
-                        "turns": game.turn,
-                        "player1_ships_remaining": sum(1 for s in game.player1.ships if not s.is_destroyed),
-                        "player2_ships_remaining": sum(1 for s in game.player2.ships if not s.is_destroyed)
-                    }
-                })
-
-    except WebSocketDisconnect:
-        pass
-
-
-# === FLEET COMMANDER ===
 
 from .fleet_commander import (
     FleetCommanderGame, GamePhase as FCGamePhase, GameConfig as FCGameConfig,
@@ -690,6 +24,34 @@ from .fleet_commander.tournament import (
     TournamentState, MatchState, MatchResult, Participant
 )
 
+logger = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifecycle manager for the application."""
+    print("Fleet Commander Tournament Server starting...")
+    yield
+    print("Fleet Commander Tournament Server shutting down...")
+
+
+app = FastAPI(
+    title="Fleet Commander Tournament",
+    description="AI bot tournament platform for Fleet Commander",
+    version="2.0.0",
+    lifespan=lifespan,
+)
+
+# CORS for frontend
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://localhost:3000"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
 # Replay storage
 replay_storage = ReplayStorage("replays")
 
@@ -702,6 +64,14 @@ FLEET_BOTS = {
     "defensive": DefensiveBot,
     "random": RandomBot,
 }
+
+
+# === REST API ===
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {"status": "ok", "message": "Fleet Commander Tournament Server"}
 
 
 @app.get("/api/fleet-commander/bot-types")
@@ -719,101 +89,65 @@ async def get_fleet_bot_types():
 
 @app.get("/api/fleet-commander/rules")
 async def get_fleet_commander_rules():
-    """Get complete game rules for Fleet Commander.
+    """Get Fleet Commander game rules and ship configurations."""
+    from .fleet_commander.models import SHIP_CONFIGS, ShipType, AbilityType
 
-    This endpoint provides all game mechanics, ship stats, and ability costs
-    for external AI/bots to understand the game.
-    """
-    from app.fleet_commander.models import SHIP_CONFIGS, ShipType, AbilityType
-
-    # Build ship info from configs
-    ships = {}
+    ship_info = {}
     for ship_type, config in SHIP_CONFIGS.items():
-        if ship_type == ShipType.SCOUT:  # Scout is removed
-            continue
         abilities = {}
-        for ab in config.abilities:
-            abilities[ab.ability_type.value] = {
-                "range": ab.range,
-                "damage": ab.damage,
-                "ap_cost": ab.ap_cost,
-                "cooldown": ab.cooldown,
-                "area_size": ab.area_size,
-                "blocks_movement": ab.blocks_movement,
+        for ability in config.abilities:
+            abilities[ability.ability_type.value] = {
+                "ap_cost": ability.ap_cost,
+                "cooldown": ability.cooldown,
+                "range": ability.range,
+                "damage": ability.damage,
+                "area_size": ability.area_size,
+                "description": ability.description,
             }
-        ships[ship_type.value] = {
+
+        ship_info[ship_type.value] = {
             "name": config.name,
             "size": config.size,
-            "max_hp": config.max_hp,
+            "hp": config.hp,
             "speed": config.speed,
-            "max_action_points": config.max_action_points,
+            "action_points": config.action_points,
+            "fire_range": config.fire_range,
+            "fire_damage": config.fire_damage,
+            "scan_range": config.scan_range,
             "abilities": abilities,
         }
 
     return {
         "game_name": "Fleet Commander",
-        "version": "2.0",
-
-        "overview": {
-            "description": "3D space fleet combat game. Destroy all enemy ships to win.",
-            "grid_size": [32, 32, 16],
-            "players": 2,
-            "turn_based": True,
+        "grid_sizes": {
+            "small": {"x": 24, "y": 24, "z": 12},
+            "standard": {"x": 32, "y": 32, "z": 16},
         },
-
-        "action_points": {
-            "description": "Each ship has its own Action Points (AP) per turn. Smaller ships have more AP.",
-            "movement_cost": "1 AP per cell moved",
-            "ability_costs": "Varies by ability (see ship abilities)",
-            "reset": "All ships reset to max AP at start of each turn",
+        "ship_types": ship_info,
+        "mechanics": {
+            "action_points": "Each ship has its own AP pool per turn. Smaller ships get more AP.",
+            "fog_of_war": "You can only see enemy ships within scan range of your ships.",
+            "storm": "After storm_start_turn, the battlefield shrinks periodically. Ships outside take damage.",
+            "abilities": "Each ship type has unique abilities with AP costs and cooldowns.",
         },
-
-        "ships": ships,
-
-        "fleet_composition": [
-            {"type": "destroyer", "count": 2},
-            {"type": "cruiser", "count": 1},
-            {"type": "support", "count": 1},
-            {"type": "carrier", "count": 1},
-            {"type": "artillery", "count": 1},
-            {"type": "minelayer", "count": 1},
-        ],
-
-        "storm": {
-            "description": "The battlefield shrinks over time. Ships outside safe zone take damage.",
-            "start_turn": 20,
-            "shrink_interval": 5,
-            "damage_per_turn": 1,
-        },
-
-        "victory_conditions": [
-            "Destroy all enemy ships",
-            "Have more ships when max turns reached",
-            "Storm eliminates opponent's fleet",
-        ],
-
-        "websocket_protocol": {
+        "bot_protocol": {
             "connect": "ws://host:port/ws/fleet-commander?player1_type=websocket&player2_type=aggressive",
             "messages": {
-                "server_to_client": [
-                    "game_start - Game configuration",
-                    "place_fleet - Request fleet placement",
-                    "get_actions - Request actions for your turn",
-                    "turn_result - Result of actions taken",
-                    "game_end - Game over with winner",
-                ],
-                "client_to_server": [
-                    "fleet_placement - Your ship positions",
-                    "actions - List of actions for this turn",
-                ],
-            },
+                "game_start": "Server sends game config",
+                "place_fleet": "Server requests fleet placement",
+                "fleet_placement": "Client sends ship positions",
+                "get_actions": "Server sends game view, expects actions",
+                "actions": "Client sends list of actions",
+                "turn_result": "Server sends result of actions",
+                "game_end": "Server sends final result",
+            }
         },
     }
 
 
 @app.get("/api/fleet-commander/replays")
-async def list_replays():
-    """List available game replays."""
+async def get_replays():
+    """List available replays."""
     return {"replays": replay_storage.list_replays()}
 
 
@@ -826,83 +160,57 @@ async def get_replay(replay_id: str):
     return replay.to_dict()
 
 
-# === TOURNAMENT API ===
+# === Tournament REST API ===
 
-class CreateTournamentRequest(BaseModel):
+class FleetTournamentConfig(BaseModel):
     name: str
-    format: str = "round_robin"  # "round_robin" or "single_elimination"
-    best_of: int = 1
-    max_participants: int = 8
+    format: str = "round_robin"
     use_small_grid: bool = True
-    include_bots: List[str] = []  # Internal bots to include
-
-
-class JoinTournamentRequest(BaseModel):
-    bot_name: str
+    max_participants: int = 8
 
 
 @app.post("/api/fleet-commander/tournaments")
-async def create_tournament(request: CreateTournamentRequest):
+async def create_fleet_tournament(config: FleetTournamentConfig):
     """Create a new Fleet Commander tournament."""
-    format_enum = TournamentFormat.ROUND_ROBIN
-    if request.format == "single_elimination":
-        format_enum = TournamentFormat.SINGLE_ELIMINATION
-
     tournament = tournament_manager.create_tournament(
-        name=request.name,
-        format=format_enum,
-        best_of=request.best_of,
-        max_participants=request.max_participants,
-        use_small_grid=request.use_small_grid,
+        name=config.name,
+        format=config.format,
+        use_small_grid=config.use_small_grid,
+        max_participants=config.max_participants,
     )
-
-    # Add internal bots if requested
-    for bot_type in request.include_bots:
-        if bot_type in FLEET_BOTS:
-            tournament.add_participant(
-                name=f"{bot_type.title()}Bot",
-                is_internal_bot=True,
-                internal_bot_type=bot_type,
-            )
-
-    return {"tournament": tournament.to_dict()}
+    return {"tournament_id": tournament.id, "tournament": tournament.to_dict()}
 
 
 @app.get("/api/fleet-commander/tournaments")
-async def list_tournaments(include_completed: bool = False):
+async def list_fleet_tournaments():
     """List all tournaments."""
-    tournaments = tournament_manager.list_tournaments(include_completed=include_completed)
-    return {"tournaments": [t.to_dict() for t in tournaments]}
+    return {"tournaments": [t.to_dict() for t in tournament_manager.list_tournaments()]}
 
 
 @app.get("/api/fleet-commander/tournaments/{tournament_id}")
-async def get_tournament(tournament_id: str):
+async def get_fleet_tournament(tournament_id: str):
     """Get tournament details."""
     tournament = tournament_manager.get_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-    return {"tournament": tournament.to_dict()}
+    return tournament.to_dict()
 
 
 @app.get("/api/fleet-commander/tournaments/{tournament_id}/live")
-async def get_live_match_state(tournament_id: str):
-    """Get the current live game state for spectating."""
+async def get_live_match(tournament_id: str):
+    """Get the current live game state for a tournament."""
     tournament = tournament_manager.get_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
-
-    if not tournament.live_game_state:
-        raise HTTPException(status_code=404, detail="No live match in progress")
-
     return {
-        "match_id": tournament.current_match.id if tournament.current_match else None,
-        "game_state": tournament.live_game_state,
+        "live_game_state": tournament.live_game_state,
+        "current_match": tournament.current_match.to_dict() if tournament.current_match else None,
     }
 
 
 @app.post("/api/fleet-commander/tournaments/{tournament_id}/add-bot")
-async def add_internal_bot(tournament_id: str, bot_type: str):
-    """Add an internal bot to the tournament."""
+async def add_bot_to_tournament(tournament_id: str, bot_type: str = "tactical", bot_name: Optional[str] = None):
+    """Add an internal bot to a tournament."""
     tournament = tournament_manager.get_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
@@ -910,33 +218,31 @@ async def add_internal_bot(tournament_id: str, bot_type: str):
     if bot_type not in FLEET_BOTS:
         raise HTTPException(status_code=400, detail=f"Unknown bot type: {bot_type}")
 
+    name = bot_name or f"{bot_type.title()}Bot"
     participant = tournament.add_participant(
-        name=f"{bot_type.title()}Bot",
+        name=name,
         is_internal_bot=True,
         internal_bot_type=bot_type,
     )
-
     if not participant:
-        raise HTTPException(status_code=400, detail="Could not add bot (tournament full or already started)")
+        raise HTTPException(status_code=400, detail="Could not add bot (tournament full?)")
 
+    tournament.set_participant_ready(participant.id, True)
     return {"participant": participant.to_dict(), "tournament": tournament.to_dict()}
 
 
 @app.post("/api/fleet-commander/tournaments/{tournament_id}/start")
-async def start_tournament(tournament_id: str):
-    """Start a tournament."""
+async def start_fleet_tournament(tournament_id: str):
+    """Start a tournament (all participants must be ready)."""
     tournament = tournament_manager.get_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
 
     if not tournament.can_start():
-        raise HTTPException(
-            status_code=400,
-            detail="Cannot start tournament. Need at least 2 ready participants."
-        )
+        raise HTTPException(status_code=400, detail="Cannot start: need at least 2 ready participants")
 
     tournament.start()
-    return {"tournament": tournament.to_dict()}
+    return {"message": "Tournament started", "tournament": tournament.to_dict()}
 
 
 @app.delete("/api/fleet-commander/tournaments/{tournament_id}")
@@ -946,6 +252,8 @@ async def delete_tournament(tournament_id: str):
         raise HTTPException(status_code=404, detail="Tournament not found")
     return {"deleted": True}
 
+
+# === WebSocket: Single Game ===
 
 async def _run_fleet_commander_with_ws_bot(
     websocket: WebSocket,
@@ -960,26 +268,21 @@ async def _run_fleet_commander_with_ws_bot(
         deserialize_position, deserialize_direction, deserialize_ship_type, deserialize_action
     )
 
-    # Create config
     config = FCGameConfig.small() if use_small else FCGameConfig()
 
-    # Create internal bot for the non-WebSocket player
     other_player_id = 1 - ws_player_id
     other_type = player2_type if ws_player_id == 0 else player1_type
     other_bot_class = FLEET_BOTS.get(other_type, TacticalBot)
     other_bot = other_bot_class()
     other_bot.on_game_start(config)
 
-    # Create game
     game = FleetCommanderGame(config=config)
 
-    # Send game_start to WebSocket bot
     await websocket.send_json({
         "type": "game_start",
         "config": serialize_config(config)
     })
 
-    # Get fleet placement from WebSocket bot
     zone = config.player1_zone if ws_player_id == 0 else config.player2_zone
     await websocket.send_json({
         "type": "place_fleet",
@@ -987,7 +290,6 @@ async def _run_fleet_commander_with_ws_bot(
         "zone_x_max": zone[1]
     })
 
-    # Wait for fleet_placement response
     response = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
     placement_data = json.loads(response)
 
@@ -995,7 +297,6 @@ async def _run_fleet_commander_with_ws_bot(
         await websocket.send_json({"type": "error", "message": f"Expected fleet_placement, got {placement_data.get('type')}"})
         return
 
-    # Parse WebSocket bot's placements
     ws_placements = []
     for p in placement_data["placements"]:
         ship_type = deserialize_ship_type(p["ship_type"])
@@ -1003,11 +304,9 @@ async def _run_fleet_commander_with_ws_bot(
         direction = deserialize_direction(p["direction"])
         ws_placements.append((ship_type, position, direction))
 
-    # Get internal bot's placements
     other_zone = config.player2_zone if ws_player_id == 0 else config.player1_zone
     other_placements = other_bot.place_fleet(config, other_zone[0], other_zone[1])
 
-    # Setup game ships
     if ws_player_id == 0:
         game.setup_fleet(0, ws_placements)
         game.setup_fleet(1, other_placements)
@@ -1021,7 +320,6 @@ async def _run_fleet_commander_with_ws_bot(
 
     game.start_game()
 
-    # Create recorder
     recorder = GameRecorder(config, game.players[0].name, game.players[1].name)
     recorder.record_initial_state(
         [s.to_dict() for s in game.players[0].ships],
@@ -1030,17 +328,13 @@ async def _run_fleet_commander_with_ws_bot(
 
     max_turns = config.max_turns
 
-    # Game loop
     while game.phase == FCGamePhase.PLAYING and game.turn < max_turns:
         current_player_idx = game.current_player_idx
-        player = game.current_player
 
-        # Get view
         state_dict = game.get_visible_state(current_player_idx)
         view = create_game_view(state_dict)
 
         if current_player_idx == ws_player_id:
-            # WebSocket bot's turn - send get_actions and wait for response
             view_dict = _create_view_dict(view, state_dict)
 
             await websocket.send_json({
@@ -1048,7 +342,6 @@ async def _run_fleet_commander_with_ws_bot(
                 "view": view_dict
             })
 
-            # Wait for actions response
             response = await asyncio.wait_for(websocket.receive_text(), timeout=30.0)
             actions_data = json.loads(response)
 
@@ -1058,14 +351,11 @@ async def _run_fleet_commander_with_ws_bot(
 
             actions = [deserialize_action(a) for a in actions_data.get("actions", [])]
         else:
-            # Internal bot's turn
             actions = other_bot.get_actions(view)
 
-        # Record and execute
         recorder.record_actions(game.turn, current_player_idx, actions)
         result = game.execute_turn(actions)
 
-        # Record result
         full_state = {
             "player1_ships": [s.to_dict() for s in game.players[0].ships],
             "player2_ships": [s.to_dict() for s in game.players[1].ships],
@@ -1076,9 +366,7 @@ async def _run_fleet_commander_with_ws_bot(
         }
         recorder.record_turn_result(result, full_state)
 
-        # Notify appropriate bot
         if current_player_idx == ws_player_id:
-            # Send turn_result to WebSocket bot
             result_dict = {
                 "turn": result.turn,
                 "player_id": result.player_id,
@@ -1104,34 +392,27 @@ async def _run_fleet_commander_with_ws_bot(
 
         await asyncio.sleep(delay)
 
-    # Game ended
     winner_id = game.winner if game.winner is not None else -1
     ws_won = (winner_id == ws_player_id)
 
-    # Record game end
     recorder.record_game_end(winner_id, {
         "player1_ships": [s.to_dict() for s in game.players[0].ships],
         "player2_ships": [s.to_dict() for s in game.players[1].ships],
     })
 
-    # Save replay
     replay_id = replay_storage.save(recorder.get_replay())
 
-    # Determine reason (from winner/loser perspective)
     if winner_id >= 0:
         loser_id = 1 - winner_id
         loser_fleet_destroyed = all(s.is_destroyed for s in game.players[loser_id].ships)
 
         if ws_won:
-            # WebSocket bot won
             reason = "All enemy ships destroyed" if loser_fleet_destroyed else "More ships remaining"
         else:
-            # WebSocket bot lost
             reason = "Your fleet was destroyed" if loser_fleet_destroyed else "Fewer ships remaining"
     else:
         reason = "Draw"
 
-    # Send game_end to WebSocket bot
     await websocket.send_json({
         "type": "game_end",
         "won": ws_won,
@@ -1217,16 +498,12 @@ async def fleet_commander_websocket(
     - player2_type: Bot type or 'websocket' for external bot
     - delay: Delay between turns in ms (default 500)
     - small_grid: Use small grid (default true)
-
-    If player1_type=websocket, the connecting client plays as player 1.
-    If player2_type=websocket, the connecting client plays as player 2.
     """
     await websocket.accept()
 
     delay_sec = delay / 1000.0
     use_small = small_grid
 
-    # Check if this is a WebSocket bot connection
     ws_player_id = None
     if player1_type == "websocket":
         ws_player_id = 0
@@ -1234,14 +511,12 @@ async def fleet_commander_websocket(
         ws_player_id = 1
 
     try:
-        # If WebSocket bot, start game immediately
         if ws_player_id is not None:
             await _run_fleet_commander_with_ws_bot(
                 websocket, ws_player_id, player1_type, player2_type, delay_sec, use_small
             )
             return
 
-        # Otherwise, wait for start_game message (spectator mode)
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
@@ -1252,10 +527,8 @@ async def fleet_commander_websocket(
                 delay_sec = message.get("delay", delay) / 1000.0
                 use_small = message.get("small_grid", small_grid)
 
-                # Create config
                 config = FCGameConfig.small() if use_small else FCGameConfig()
 
-                # Create bots
                 bot1_class = FLEET_BOTS.get(p1_type, TacticalBot)
                 bot2_class = FLEET_BOTS.get(p2_type, TacticalBot)
                 bot1 = bot1_class()
@@ -1263,24 +536,20 @@ async def fleet_commander_websocket(
                 bot1.on_game_start(config)
                 bot2.on_game_start(config)
 
-                # Create game
                 game = FleetCommanderGame(config=config)
 
-                # Auto-place fleets
                 game.auto_place_fleet(0)
                 game.auto_place_fleet(1)
                 game.players[0].name = bot1.get_name()
                 game.players[1].name = bot2.get_name()
                 game.start_game()
 
-                # Create recorder for replay
                 recorder = GameRecorder(config, game.players[0].name, game.players[1].name)
                 recorder.record_initial_state(
                     [s.to_dict() for s in game.players[0].ships],
                     [s.to_dict() for s in game.players[1].ships]
                 )
 
-                # Send initial state
                 await websocket.send_json({
                     "type": "game_start",
                     "data": {
@@ -1307,25 +576,19 @@ async def fleet_commander_websocket(
                 bots = [bot1, bot2]
                 max_turns = config.max_turns
 
-                # Game loop
                 while game.phase == FCGamePhase.PLAYING and game.turn < max_turns:
                     current_bot = bots[game.current_player_idx]
                     player = game.current_player
 
-                    # Get view for bot
                     state_dict = game.get_visible_state(game.current_player_idx)
                     view = create_game_view(state_dict)
 
-                    # Get actions from bot
                     actions = current_bot.get_actions(view)
 
-                    # Record actions
                     recorder.record_actions(game.turn, game.current_player_idx, actions)
 
-                    # Execute turn
                     result = game.execute_turn(actions)
 
-                    # Record result
                     full_state = {
                         "player1_ships": [s.to_dict() for s in game.players[0].ships],
                         "player2_ships": [s.to_dict() for s in game.players[1].ships],
@@ -1336,10 +599,8 @@ async def fleet_commander_websocket(
                     }
                     recorder.record_turn_result(result, full_state)
 
-                    # Notify bot
                     current_bot.on_turn_result(result)
 
-                    # Send turn update
                     await websocket.send_json({
                         "type": "turn",
                         "data": {
@@ -1377,20 +638,16 @@ async def fleet_commander_websocket(
 
                     await asyncio.sleep(delay)
 
-                # Game ended
                 winner_id = game.winner if game.winner is not None else -1
                 winner_name = game.players[winner_id].name if winner_id >= 0 else "Draw"
 
-                # Record game end
                 recorder.record_game_end(winner_id, {
                     "player1_ships": [s.to_dict() for s in game.players[0].ships],
                     "player2_ships": [s.to_dict() for s in game.players[1].ships],
                 })
 
-                # Save replay
                 replay_id = replay_storage.save(recorder.get_replay())
 
-                # Send end message
                 await websocket.send_json({
                     "type": "game_end",
                     "data": {
@@ -1416,7 +673,6 @@ async def fleet_commander_websocket(
 
                 player = ReplayPlayer(replay)
 
-                # Send initial state
                 initial = player.get_initial_state()
                 await websocket.send_json({
                     "type": "replay_start",
@@ -1433,45 +689,29 @@ async def fleet_commander_websocket(
                 })
 
             elif message.get("action") == "replay_step":
-                # This would be handled by maintaining player state
-                # For now, client can request specific turns
                 pass
 
     except WebSocketDisconnect:
         pass
 
 
-# === TOURNAMENT WEBSOCKET ===
+# === Tournament WebSocket ===
 
-# Store active tournament connections
-tournament_connections: dict[str, dict[str, list]] = {}  # tournament_id -> {participants: [], spectators: []}
+tournament_connections: dict[str, dict[str, list]] = {}
 
 
 @app.websocket("/ws/fleet-commander/tournament/{tournament_id}")
-async def tournament_websocket(
+async def fleet_tournament_websocket(
     websocket: WebSocket,
     tournament_id: str,
-    role: str = "spectator",  # "participant" or "spectator"
+    role: str = "spectator",
     bot_name: str = "WebSocketBot",
 ):
-    """
-    WebSocket for tournament participation and spectating.
+    """WebSocket for tournament participation and spectating.
 
     Query params:
     - role: "participant" to join as a bot, "spectator" to watch
     - bot_name: Name for your bot (if participant)
-
-    Protocol for participants:
-    1. Connect with role=participant&bot_name=MyBot
-    2. Receive: {"type": "registered", "participant_id": "...", "tournament": {...}}
-    3. When match starts: {"type": "match_start", "opponent": "...", "match_id": "..."}
-    4. Then normal game protocol: place_fleet, get_actions, turn_result, game_end
-    5. After each match: {"type": "match_end", "result": {...}}
-    6. Tournament end: {"type": "tournament_end", "standings": [...]}
-
-    Protocol for spectators:
-    1. Connect with role=spectator
-    2. Receive tournament updates and match broadcasts
     """
     await websocket.accept()
 
@@ -1481,7 +721,6 @@ async def tournament_websocket(
         await websocket.close()
         return
 
-    # Initialize connection storage for this tournament
     if tournament_id not in tournament_connections:
         tournament_connections[tournament_id] = {"participants": [], "spectators": []}
 
@@ -1489,7 +728,6 @@ async def tournament_websocket(
 
     try:
         if role == "participant":
-            # Register as participant
             if tournament.state != TournamentState.LOBBY:
                 await websocket.send_json({"type": "error", "message": "Tournament already started"})
                 await websocket.close()
@@ -1508,14 +746,12 @@ async def tournament_websocket(
 
             tournament_connections[tournament_id]["participants"].append(websocket)
 
-            # Send registration confirmation
             await websocket.send_json({
                 "type": "registered",
                 "participant_id": participant.id,
                 "tournament": tournament.to_dict(),
             })
 
-            # Broadcast participant joined
             await _broadcast_tournament_event(tournament_id, {
                 "type": "participant_joined",
                 "participant": participant.to_dict(),
@@ -1523,20 +759,17 @@ async def tournament_websocket(
             })
 
         else:
-            # Spectator mode
             tournament_connections[tournament_id]["spectators"].append(websocket)
             await websocket.send_json({
                 "type": "spectator_joined",
                 "tournament": tournament.to_dict(),
             })
 
-        # Keep connection alive and handle messages
         while True:
             data = await websocket.receive_text()
             message = json.loads(data)
 
             if message.get("type") == "ready" and participant:
-                # Participant signals ready
                 tournament.set_participant_ready(participant.id, True)
                 await _broadcast_tournament_event(tournament_id, {
                     "type": "participant_ready",
@@ -1548,7 +781,6 @@ async def tournament_websocket(
                 await websocket.send_json({"type": "pong"})
 
     except WebSocketDisconnect:
-        # Clean up on disconnect
         if role == "participant" and participant:
             if tournament.state == TournamentState.LOBBY:
                 tournament.remove_participant(participant.id)
@@ -1576,7 +808,6 @@ async def _broadcast_tournament_event(tournament_id: str, event: dict):
         except Exception:
             dead.append(ws)
 
-    # Clean up dead connections
     for ws in dead:
         for key in ["participants", "spectators"]:
             if ws in tournament_connections[tournament_id].get(key, []):
@@ -1585,12 +816,7 @@ async def _broadcast_tournament_event(tournament_id: str, event: dict):
 
 @app.post("/api/fleet-commander/tournaments/{tournament_id}/run")
 async def run_tournament(tournament_id: str):
-    """
-    Run a tournament to completion.
-
-    This endpoint starts the tournament and plays all matches.
-    Use WebSocket to watch live or poll for status.
-    """
+    """Run a tournament to completion."""
     tournament = tournament_manager.get_tournament(tournament_id)
     if not tournament:
         raise HTTPException(status_code=404, detail="Tournament not found")
@@ -1603,7 +829,6 @@ async def run_tournament(tournament_id: str):
             raise HTTPException(status_code=400, detail="Cannot start tournament. Need at least 2 ready participants.")
         tournament.start()
 
-    # Run tournament in background
     asyncio.create_task(_run_tournament_matches(tournament_id))
 
     return {"message": "Tournament started", "tournament": tournament.to_dict()}
@@ -1611,16 +836,12 @@ async def run_tournament(tournament_id: str):
 
 async def _run_tournament_matches(tournament_id: str):
     """Background task to run all tournament matches."""
-    import logging
-    logger = logging.getLogger(__name__)
-
     tournament = tournament_manager.get_tournament(tournament_id)
     if not tournament:
         logger.error(f"Tournament {tournament_id} not found")
         return
 
     try:
-        # Broadcast tournament start
         await _broadcast_tournament_event(tournament_id, {
             "type": "tournament_started",
             "tournament": tournament.to_dict(),
@@ -1636,7 +857,6 @@ async def _run_tournament_matches(tournament_id: str):
             tournament.current_match = match
             logger.info(f"Starting match {match.id}: {match.player1_id} vs {match.player2_id}")
 
-            # Get participants
             p1 = tournament.participants.get(match.player1_id)
             p2 = tournament.participants.get(match.player2_id)
 
@@ -1644,7 +864,6 @@ async def _run_tournament_matches(tournament_id: str):
                 logger.error(f"Participants not found for match {match.id}")
                 continue
 
-            # Broadcast match start
             await _broadcast_tournament_event(tournament_id, {
                 "type": "match_start",
                 "match": match.to_dict(),
@@ -1652,12 +871,10 @@ async def _run_tournament_matches(tournament_id: str):
                 "player2": p2.to_dict(),
             })
 
-            # Run the match
             try:
                 result = await _run_tournament_match(tournament, match, p1, p2)
             except Exception as e:
                 logger.exception(f"Error running match {match.id}: {e}")
-                # Create a default result (draw)
                 result = MatchResult(
                     winner_id=None,
                     loser_id=None,
@@ -1667,10 +884,8 @@ async def _run_tournament_matches(tournament_id: str):
                     replay_id=None,
                 )
 
-            # Record result
             tournament.record_match_result(match.id, result)
 
-            # Broadcast match end
             await _broadcast_tournament_event(tournament_id, {
                 "type": "match_end",
                 "match": match.to_dict(),
@@ -1678,10 +893,8 @@ async def _run_tournament_matches(tournament_id: str):
                 "standings": [s.to_dict() for s in tournament.get_leaderboard()],
             })
 
-            # Brief pause between matches
             await asyncio.sleep(2)
 
-        # Tournament complete
         tournament.complete()
         winner = tournament.get_winner()
         logger.info(f"Tournament {tournament_id} completed. Winner: {winner.name if winner else 'None'}")
@@ -1704,40 +917,22 @@ async def _run_tournament_match(
     p2: Participant,
 ) -> MatchResult:
     """Run a single match between two participants."""
-    import logging
-    logger = logging.getLogger(__name__)
-    from .fleet_commander.bot_interface import create_game_view
-
-    logger.info(f"Running match: {p1.name} vs {p2.name}")
-
-    # Create game config
     config = FCGameConfig.small() if tournament.use_small_grid else FCGameConfig()
 
-    # Create game
     game = FleetCommanderGame(config=config)
 
-    # Create bots (internal or WebSocket)
-    logger.info(f"Creating bots...")
     bot1 = _create_tournament_bot(p1, config)
     bot2 = _create_tournament_bot(p2, config)
-    logger.info(f"Bots created: {type(bot1).__name__}, {type(bot2).__name__}")
 
-    # Get placements
-    logger.info(f"Getting fleet placements...")
     placements1 = bot1.place_fleet(config, config.player1_zone[0], config.player1_zone[1])
     placements2 = bot2.place_fleet(config, config.player2_zone[0], config.player2_zone[1])
-    logger.info(f"Placements received")
 
-    # Setup game
-    logger.info(f"Setting up game...")
     game.setup_fleet(0, placements1)
     game.setup_fleet(1, placements2)
     game.players[0].name = p1.name
     game.players[1].name = p2.name
     game.start_game()
-    logger.info(f"Game started")
 
-    # Create recorder
     recorder = GameRecorder(config, p1.name, p2.name)
     recorder.record_initial_state(
         [s.to_dict() for s in game.players[0].ships],
@@ -1747,8 +942,6 @@ async def _run_tournament_match(
     bots = [bot1, bot2]
     max_turns = config.max_turns
 
-    # Set initial game state for spectators BEFORE the loop starts
-    logger.info(f"Setting initial live_game_state for tournament {tournament.id}")
     tournament.live_game_state = {
         "turn": game.turn,
         "phase": game.phase.value if hasattr(game.phase, 'value') else str(game.phase),
@@ -1762,34 +955,26 @@ async def _run_tournament_match(
             "grid_size": list(config.grid_size),
         },
     }
-    logger.info(f"live_game_state set: turn={game.turn}, phase={game.phase}")
 
-    # Broadcast initial state via WebSocket
     await _broadcast_tournament_event(tournament.id, {
         "type": "live_match_update",
         "game_state": tournament.live_game_state,
     })
 
-    # Small delay before starting to allow spectators to connect
     await asyncio.sleep(0.5)
 
-    # Game loop
     while game.phase == FCGamePhase.PLAYING and game.turn < max_turns:
         current_bot = bots[game.current_player_idx]
 
-        # Get view
         state_dict = game.get_visible_state(game.current_player_idx)
         view = create_game_view(state_dict)
 
-        # Get actions
         actions = current_bot.get_actions(view)
 
-        # Execute
         recorder.record_actions(game.turn, game.current_player_idx, actions)
         result = game.execute_turn(actions)
         current_bot.on_turn_result(result)
 
-        # Update live game state for spectators
         tournament.live_game_state = {
             "turn": game.turn,
             "phase": game.phase.value if hasattr(game.phase, 'value') else str(game.phase),
@@ -1805,16 +990,13 @@ async def _run_tournament_match(
             "last_turn_result": result.to_dict(),
         }
 
-        # Broadcast turn update via WebSocket
         await _broadcast_tournament_event(tournament.id, {
             "type": "live_match_update",
             "game_state": tournament.live_game_state,
         })
 
-        # Delay between turns for watchability (0.3s = ~20 turns visible per 6 seconds)
         await asyncio.sleep(0.3)
 
-    # Update final state with winner before clearing
     tournament.live_game_state = {
         "turn": game.turn,
         "phase": "finished",
@@ -1830,16 +1012,13 @@ async def _run_tournament_match(
         },
     }
 
-    # Broadcast final state via WebSocket
     await _broadcast_tournament_event(tournament.id, {
         "type": "live_match_update",
         "game_state": tournament.live_game_state,
     })
 
-    # Keep final state visible for a moment
     await asyncio.sleep(2.0)
 
-    # Game ended - clear live state and notify
     tournament.live_game_state = None
     await _broadcast_tournament_event(tournament.id, {
         "type": "live_match_ended",
@@ -1847,7 +1026,6 @@ async def _run_tournament_match(
     winner_id = game.winner if game.winner is not None else -1
     replay_id = replay_storage.save(recorder.get_replay())
 
-    # Map game winner to participant
     winner_participant_id = None
     loser_participant_id = None
     winner_ships = 0
@@ -1882,8 +1060,7 @@ def _create_tournament_bot(participant: Participant, config):
         bot.on_game_start(config)
         return bot
 
-    # For WebSocket bots, we'd need async handling
-    # For now, fall back to TacticalBot if not internal
+    # For WebSocket bots, fall back to TacticalBot for now
     # TODO: Implement WebSocket bot adapter for tournaments
     bot = TacticalBot()
     bot.on_game_start(config)

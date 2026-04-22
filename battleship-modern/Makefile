@@ -1,19 +1,17 @@
-.PHONY: install install-backend install-frontend run run-backend run-frontend test test-bot test-unit test-tournament clean help
+.PHONY: install install-backend install-frontend run run-backend run-frontend test-unit test-bot test-tournament clean help
 
 # Default target
 help:
-	@echo "SpaceBattleship - Makefile commands"
+	@echo "Fleet Commander - Makefile commands"
 	@echo ""
-	@echo "  make install        - Install all dependencies"
-	@echo "  make run            - Run both backend and frontend"
-	@echo "  make run-backend    - Run only backend (port 8000)"
-	@echo "  make run-frontend   - Run only frontend (port 5173)"
-	@echo "  make test           - Run test games"
-	@echo "  make test-unit      - Run unit tests (pytest)"
-	@echo "  make test-bot       - Run WebSocket bot against backend"
-	@echo "  make test-tournament- Run a quick tournament (4 bots)"
-	@echo "  make train          - Train RL agent"
-	@echo "  make clean          - Remove generated files"
+	@echo "  make install          - Install all dependencies"
+	@echo "  make run              - Run both backend and frontend"
+	@echo "  make run-backend      - Run only backend (port 8000)"
+	@echo "  make run-frontend     - Run only frontend (port 5173)"
+	@echo "  make test-unit        - Run unit tests (pytest)"
+	@echo "  make test-bot         - Run WebSocket bot against backend"
+	@echo "  make test-tournament  - Run a quick tournament (4 bots)"
+	@echo "  make clean            - Remove generated files"
 	@echo ""
 
 # Install all dependencies
@@ -29,7 +27,7 @@ install-frontend:
 
 # Run services
 run:
-	@echo "Starting SpaceBattleship..."
+	@echo "Starting Fleet Commander..."
 	@echo "Backend: http://localhost:8000"
 	@echo "Frontend: http://localhost:5173"
 	@echo ""
@@ -40,24 +38,6 @@ run-backend:
 
 run-frontend:
 	cd frontend && npm run dev
-
-# Run test games
-test:
-	@echo "Running SpaceBattleship test games..."
-	@cd backend && python -c "\
-from app.game.game3d import SpaceBattleshipGame; \
-from app.game.player3d import HunterAI3D, RandomPlayer3D, SmartHunter3D; \
-print('=== SpaceBattleship Test ==='); \
-print('Grid: 12x12x8 = 1,152 cells\n'); \
-smart_wins = 0; \
-for i in range(10): \
-    p1 = SmartHunter3D(name='SmartHunter'); \
-    p2 = RandomPlayer3D(name='Random'); \
-    game = SpaceBattleshipGame(player1=p1, player2=p2); \
-    winner = game.play_full_game(); \
-    if winner.name == 'SmartHunter': smart_wins += 1; \
-print(f'SmartHunter vs Random: {smart_wins}/10 wins'); \
-"
 
 # Run unit tests
 test-unit:
@@ -79,19 +59,12 @@ test-tournament:
 	@echo ""
 	python3 scripts/run_tournament.py
 
-# Train RL agent
-train:
-	@echo "Training RL agent (this may take a while)..."
-	cd backend && python -m app.ml.trainer
-
 # Clean generated files
 clean:
 	@echo "Cleaning up..."
 	rm -rf backend/app/__pycache__
 	rm -rf backend/app/*/__pycache__
-	rm -rf backend/models
-	rm -rf backend/logs
-	rm -rf backend/tensorboard_logs
+	rm -rf backend/replays
 	rm -rf frontend/node_modules
 	rm -rf frontend/dist
 	rm -rf frontend/.vite

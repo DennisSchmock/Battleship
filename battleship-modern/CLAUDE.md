@@ -18,7 +18,6 @@ make run-frontend     # Kun frontend
 make test-unit        # Kører pytest unit tests (backend/tests/)
 make test-tournament  # Kører en hurtig tournament test (kræver kørende backend)
 make test-bot         # Test WebSocket bot mod backend (OPPONENT=tactical|aggressive|defensive|random)
-make train            # Træner RL agent (stable-baselines3)
 ```
 
 ### Manuel kørsel
@@ -42,23 +41,8 @@ cd frontend && npm run lint
 
 ### Backend (Python/FastAPI)
 
-Tre separate spil-engines med stigende kompleksitet:
-
-1. **Classic 2D Battleship** (`app/game/`)
-   - Standard 10×10 grid, traditionel Battleship
-   - `board.py`, `ship.py`, `player.py`, `game.py`
-
-2. **3D SpaceBattleship** (`app/game/*3d.py`)
-   - 12×12×8 grid (1,152 celler), 6 retninger
-   - Samme gameplay som 2D, bare i 3D
-
-3. **Strategic SpaceBattleship** (`app/strategic/`)
-   - Fire/Move/Scan actions, skibe kan bevæge sig
-   - `engine.py` håndterer spilflow
-   - Bots i `bots/`: RandomBot, HunterBot, ScoutBot, EvasiveBot, PredictorBot
-
-4. **Fleet Commander** (`app/fleet_commander/`) - HOVEDSPILLET
-   - 24×24×12 (small) eller 32×32×16 (standard) grid
+**Fleet Commander** (`app/fleet_commander/`) - eneste game engine:
+- 24×24×12 (small) eller 32×32×16 (standard) grid
    - 7 skibstyper med unikke abilities (se `models.py:SHIP_CONFIGS`)
    - Action Points system: små skibe har flere AP end store
    - Storm mechanic der gradvist krymper banen
@@ -71,9 +55,9 @@ Tre separate spil-engines med stigende kompleksitet:
 - **Vite** som build tool
 - **Three.js** via `@react-three/fiber` og `@react-three/drei` til 3D rendering
 - Views i `src/components/`:
-  - `FleetCommander3DView.tsx` - Hovedspillet
+  - `FleetCommander3DView.tsx` - Hovedspillet (3D visualization)
   - `FleetCommanderTournament.tsx` - Tournament UI
-  - `Strategic3DBoard.tsx` - 3D rendering komponent
+  - `TournamentMatchViewer.tsx` - Live match viewer med WebSocket
 
 ### WebSocket API
 

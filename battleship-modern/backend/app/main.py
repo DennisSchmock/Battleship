@@ -636,7 +636,7 @@ async def fleet_commander_websocket(
                         }
                     })
 
-                    await asyncio.sleep(delay)
+                    await asyncio.sleep(delay_sec)
 
                 winner_id = game.winner if game.winner is not None else -1
                 winner_name = game.players[winner_id].name if winner_id >= 0 else "Draw"

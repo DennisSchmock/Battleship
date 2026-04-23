@@ -38,6 +38,13 @@ class ScoringModel(Enum):
     TIME_TIEBREAKER = "time_tiebreaker"  # 3 per win, time used as tiebreaker
 
 
+class Division(Enum):
+    DETERMINISTIC = "deterministic"  # No LLM calls allowed
+    OPEN = "open"                    # Anything goes
+    LOCAL_LLM = "local_llm"         # Model must run locally (attested)
+    TINY_MODEL = "tiny_model"        # Parameter count < 4B (attested)
+
+
 @dataclass
 class Participant:
     """A tournament participant (bot)."""
@@ -47,6 +54,7 @@ class Participant:
     is_ready: bool = False
     is_internal_bot: bool = False  # True for built-in bots like TacticalBot
     internal_bot_type: Optional[str] = None
+    division: Division = Division.OPEN
 
     def to_dict(self) -> dict:
         return {
@@ -54,6 +62,7 @@ class Participant:
             "name": self.name,
             "is_ready": self.is_ready,
             "is_internal_bot": self.is_internal_bot,
+            "division": self.division.value,
         }
 
 
@@ -163,6 +172,7 @@ class FleetCommanderTournament:
         max_participants: int = 8,
         use_small_grid: bool = True,
         scoring_model: ScoringModel = ScoringModel.WIN_PLUS_TIME,
+        division: Optional[Division] = None,
     ):
         self.id = str(uuid.uuid4())[:8]
         self.name = name
@@ -171,6 +181,7 @@ class FleetCommanderTournament:
         self.max_participants = max_participants
         self.use_small_grid = use_small_grid
         self.scoring_model = scoring_model
+        self.division = division
 
         self.state = TournamentState.LOBBY
         self.participants: Dict[str, Participant] = {}
@@ -214,6 +225,7 @@ class FleetCommanderTournament:
         websocket: Any = None,
         is_internal_bot: bool = False,
         internal_bot_type: Optional[str] = None,
+        division: Optional[Division] = None,
     ) -> Optional[Participant]:
         """Add a participant to the tournament."""
         if self.state != TournamentState.LOBBY:
@@ -229,6 +241,7 @@ class FleetCommanderTournament:
             is_ready=is_internal_bot,  # Internal bots are always ready
             is_internal_bot=is_internal_bot,
             internal_bot_type=internal_bot_type,
+            division=division or Division.OPEN,
         )
 
         self.participants[participant.id] = participant
@@ -448,11 +461,17 @@ class FleetCommanderTournament:
         self.state = TournamentState.COMPLETED
         self.completed_at = datetime.now()
 
-    def get_leaderboard(self) -> List[Standing]:
-        """Get sorted leaderboard."""
+    def get_leaderboard(self, division: Optional[Division] = None) -> List[Standing]:
+        """Get sorted leaderboard, optionally filtered by division."""
         standings = list(self.standings.values())
+
+        if division is not None:
+            standings = [
+                s for s in standings
+                if self.participants.get(s.participant_id, Participant(id="", name="")).division == division
+            ]
+
         if self.scoring_model == ScoringModel.TIME_TIEBREAKER:
-            # Same points → lower time wins
             standings.sort(key=lambda s: (-s.points, s.total_time_used_ms, -s.ships_destroyed))
         else:
             standings.sort(key=lambda s: (-s.points, -s.ships_destroyed, s.ships_lost))
@@ -489,6 +508,7 @@ class FleetCommanderTournament:
             "started_at": self.started_at.isoformat() if self.started_at else None,
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
             "scoring_model": self.scoring_model.value,
+            "division": self.division.value if self.division else None,
         }
 
 

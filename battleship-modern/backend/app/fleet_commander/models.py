@@ -516,6 +516,9 @@ class GameConfig:
     # Time budget per player per match in ms (0 = unlimited)
     match_time_budget_ms: int = 60_000
 
+    # Lite mode: simplified ships (fire+move only, no special abilities)
+    lite_mode: bool = False
+
     @classmethod
     def small(cls) -> 'GameConfig':
         """Smaller config for faster games."""
@@ -536,6 +539,47 @@ class GameConfig:
             storm_shrink_interval=12,
             storm_damage=1,
             max_turns=300,
+        )
+
+    @classmethod
+    def lite(cls) -> 'GameConfig':
+        """Lite variant for small LLMs: 3 ships, no abilities, no storm."""
+        return cls(
+            grid_size=(16, 16, 8),
+            player1_zone=(0, 3),
+            player2_zone=(12, 15),
+            fleet_config=FleetConfig(ships=[
+                ShipType.DESTROYER,
+                ShipType.CRUISER,
+                ShipType.SUPPORT,
+            ]),
+            storm_start_turn=9999,  # Effectively disabled
+            max_turns=150,
+            lite_mode=True,
+        )
+
+    def get_ship_config(self, ship_type: ShipType) -> ShipConfig:
+        """Get ship config, respecting lite mode (strips abilities)."""
+        base = SHIP_CONFIGS[ship_type]
+        if not self.lite_mode:
+            return base
+        # Lite mode: only FIRE and SCAN, no special abilities
+        lite_abilities = [
+            a for a in base.abilities
+            if a.ability_type in (AbilityType.FIRE, AbilityType.SCAN)
+        ]
+        # Ensure at least a basic fire ability
+        if not any(a.ability_type == AbilityType.FIRE for a in lite_abilities):
+            lite_abilities.append(AbilityConfig(AbilityType.FIRE, range=3, damage=1))
+        return ShipConfig(
+            ship_type=base.ship_type,
+            name=base.name,
+            size=base.size,
+            max_hp=base.max_hp,
+            speed=base.speed,
+            stealth=0.0,  # No stealth in lite
+            abilities=lite_abilities,
+            max_action_points=base.max_action_points,
         )
 
 

@@ -98,7 +98,7 @@ class FleetCommanderGame:
         )
 
         for ship_type, start_pos, direction in placements:
-            ship_config = SHIP_CONFIGS[ship_type]
+            ship_config = self.config.get_ship_config(ship_type)
 
             # Calculate all positions for this ship
             positions = [start_pos]
@@ -146,7 +146,7 @@ class FleetCommanderGame:
         y_max, z_max = self.config.grid_size[1], self.config.grid_size[2]
 
         for ship_type in self.config.fleet_config.ships:
-            ship_config = SHIP_CONFIGS[ship_type]
+            ship_config = self.config.get_ship_config(ship_type)
             placed = False
 
             for _ in range(1000):  # Max attempts

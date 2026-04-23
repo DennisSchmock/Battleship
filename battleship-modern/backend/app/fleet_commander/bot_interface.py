@@ -327,7 +327,7 @@ def random_fleet_placement(
     y_max, z_max = config.grid_size[1], config.grid_size[2]
 
     for ship_type in config.fleet_config.ships:
-        ship_config = SHIP_CONFIGS[ship_type]
+        ship_config = config.get_ship_config(ship_type)
         placed = False
 
         for _ in range(1000):

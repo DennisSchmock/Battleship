@@ -523,12 +523,14 @@ class TournamentManager:
     def create_tournament(
         self,
         name: str,
-        format: TournamentFormat = TournamentFormat.ROUND_ROBIN,
+        format: 'TournamentFormat | str' = TournamentFormat.ROUND_ROBIN,
         best_of: int = 1,
         max_participants: int = 8,
         use_small_grid: bool = True,
     ) -> FleetCommanderTournament:
         """Create a new tournament."""
+        if isinstance(format, str):
+            format = TournamentFormat(format)
         tournament = FleetCommanderTournament(
             name=name,
             format=format,

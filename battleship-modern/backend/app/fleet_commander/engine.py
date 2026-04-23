@@ -245,10 +245,33 @@ class FleetCommanderGame:
     # ACTIONS
     # =========================================================================
 
-    def execute_turn(self, actions: List[Action]) -> TurnResult:
+    def execute_turn(self, actions: List[Action], thinking_time_ms: int = 0) -> TurnResult:
         """Execute a player's turn. Each ship gets 1 action per turn."""
         player = self.current_player
-        result = TurnResult(player_id=player.player_id, turn=self.turn)
+
+        # Clamp negative thinking time
+        thinking_time_ms = max(0, thinking_time_ms)
+
+        # Check time budget
+        budget = self.config.match_time_budget_ms
+        budget_exceeded = False
+        if budget > 0 and player.time_used_ms >= budget:
+            budget_exceeded = True
+
+        # Record thinking time
+        player.time_used_ms += thinking_time_ms
+
+        result = TurnResult(
+            player_id=player.player_id,
+            turn=self.turn,
+            budget_exceeded=budget_exceeded,
+            thinking_time_ms=thinking_time_ms,
+        )
+
+        # If budget exceeded, forfeit turn (no actions)
+        if budget_exceeded:
+            self._end_turn(result)
+            return result
 
         for action in actions:
             # Find the ship
@@ -902,4 +925,9 @@ class FleetCommanderGame:
             "my_drones": [{"id": d.id, "pos": d.position.to_tuple(), "hp": d.hp} for d in player.drones],
             "storm": storm_info,
             "grid_size": self.config.grid_size,
+            "time_remaining_ms": (
+                self.config.match_time_budget_ms - player.time_used_ms
+                if self.config.match_time_budget_ms > 0
+                else None
+            ),
         }

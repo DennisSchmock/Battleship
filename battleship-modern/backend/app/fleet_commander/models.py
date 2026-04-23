@@ -513,6 +513,9 @@ class GameConfig:
     # Deterministic seeding (None = non-deterministic)
     seed: Optional[int] = None
 
+    # Time budget per player per match in ms (0 = unlimited)
+    match_time_budget_ms: int = 60_000
+
     @classmethod
     def small(cls) -> 'GameConfig':
         """Smaller config for faster games."""
@@ -554,6 +557,9 @@ class PlayerState:
     mines: List[Mine] = field(default_factory=list)
     sensors: List[Sensor] = field(default_factory=list)
     decoys: List[Decoy] = field(default_factory=list)
+
+    # Time tracking
+    time_used_ms: int = 0
 
     # Fog of war - what this player knows
     known_cells: Dict[Position, KnownCell] = field(default_factory=dict)
@@ -692,6 +698,8 @@ class TurnResult:
     actions_taken: List[ActionResult] = field(default_factory=list)
     storm_damage_taken: Dict[str, int] = field(default_factory=dict)  # ship_id -> damage
     storm_shrunk: bool = False
+    budget_exceeded: bool = False
+    thinking_time_ms: int = 0
 
     def to_dict(self) -> dict:
         return {
@@ -700,4 +708,6 @@ class TurnResult:
             "actions_taken": [a.to_dict() for a in self.actions_taken],
             "storm_damage_taken": {k: v for k, v in self.storm_damage_taken.items()},
             "storm_shrunk": self.storm_shrunk,
+            "budget_exceeded": self.budget_exceeded,
+            "thinking_time_ms": self.thinking_time_ms,
         }

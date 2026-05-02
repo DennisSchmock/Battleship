@@ -19,6 +19,11 @@ from .fleet_commander.bot_interface import create_game_view
 from .fleet_commander.bots import TacticalBot, AggressiveBot, DefensiveBot, RandomBot
 from .fleet_commander.replay import GameRecorder, ReplayStorage, ReplayPlayer
 from .fleet_commander.websocket_bot import WebSocketBotAdapter, serialize_config
+
+from .tile_tactics import TileTacticsGame, GameConfig as TTGameConfig
+from .tile_tactics.bots import RandomTileBot, GreedyTileBot, BlockingTileBot
+from .tile_tactics.replay import TileReplayStorage
+from .tile_tactics.websocket_bot import serialize_legal_actions, serialize_state
 from .fleet_commander.tournament import (
     FleetCommanderTournament, TournamentManager, TournamentFormat,
     TournamentState, MatchState, MatchResult, Participant
@@ -45,7 +50,15 @@ app = FastAPI(
 # CORS for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000"],
+    allow_origins=[
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:3000",
+        "http://127.0.0.1:5173",
+        "http://127.0.0.1:5174",
+        "http://127.0.0.1:3000",
+    ],
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?$",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -57,6 +70,10 @@ replay_storage = ReplayStorage("replays")
 
 # Tournament manager
 tournament_manager = TournamentManager()
+
+tile_replay_storage = TileReplayStorage("tile_tactics_replays")
+
+TILE_BOTS = {"random": RandomTileBot, "greedy": GreedyTileBot, "blocking": BlockingTileBot}
 
 FLEET_BOTS = {
     "tactical": TacticalBot,
@@ -1070,3 +1087,86 @@ def _create_tournament_bot(participant: Participant, config):
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
+
+class TileQuickGameRequest(BaseModel):
+    player1_type: str = "random"
+    player2_type: str = "greedy"
+    seed: int = 0
+
+
+def _run_tile_quick_game(player1_type: str, player2_type: str, seed: int):
+    game = TileTacticsGame(TTGameConfig(seed=seed))
+    p1 = TILE_BOTS[player1_type](seed=seed)
+    p2 = TILE_BOTS[player2_type](seed=seed + 1)
+    turns = []
+    while not game.game_over:
+        legal = game.get_legal_actions()
+        bot = p1 if game.current_player == 0 else p2
+        aid = bot.choose_action(legal)
+        result = game.execute_action(aid)
+        turns.append({"turn": result.turn, "player_id": result.player_id, "action_id": result.action_id, "scores": result.scores, "board": game.board})
+    replay = {
+        "config": {"seed": seed}, "players": {"0": player1_type, "1": player2_type}, "turns": turns,
+        "winner": game.winner, "scores": game.scores, "final_board": game.board
+    }
+    replay_id = tile_replay_storage.save(replay)
+    return {"winner": game.winner, "scores": game.scores, "turns": len(turns), "replay_id": replay_id, "final_board": game.board}
+
+
+@app.get("/api/tile-tactics/rules")
+async def tile_rules():
+    return {"game_name": "Tile Tactics", "board_size": 10, "max_turns": 60, "pieces": __import__('app.tile_tactics.engine', fromlist=['PIECES']).PIECES,
+            "bot_protocol": {"request": {"type": "choose_action", "legal_actions": [{"id": "..."}]}, "response": {"type": "action", "action_id": "..."}}}
+
+
+@app.get("/api/tile-tactics/bot-types")
+async def tile_bot_types():
+    return {"types": [{"id": "random"}, {"id": "greedy"}, {"id": "blocking"}, {"id": "websocket"}]}
+
+
+@app.post("/api/tile-tactics/quick-game")
+async def tile_quick_game(req: TileQuickGameRequest):
+    if req.player1_type not in TILE_BOTS or req.player2_type not in TILE_BOTS:
+        raise HTTPException(status_code=400, detail="Unknown bot type")
+    return _run_tile_quick_game(req.player1_type, req.player2_type, req.seed)
+
+
+@app.get("/api/tile-tactics/replays")
+async def tile_replays():
+    return {"replays": tile_replay_storage.list_replays()}
+
+
+@app.get("/api/tile-tactics/replays/{replay_id}")
+async def tile_replay(replay_id: str):
+    data = tile_replay_storage.load(replay_id)
+    if not data:
+        raise HTTPException(status_code=404, detail="Replay not found")
+    return data
+
+
+@app.websocket("/ws/tile-tactics")
+async def tile_tactics_ws(websocket: WebSocket, player1_type: str = "websocket", player2_type: str = "greedy", seed: int = 0, delay: int = 200):
+    await websocket.accept()
+    game = TileTacticsGame(TTGameConfig(seed=seed))
+    built = {0: None, 1: None}
+    if player1_type in TILE_BOTS:
+        built[0] = TILE_BOTS[player1_type](seed=seed)
+    if player2_type in TILE_BOTS:
+        built[1] = TILE_BOTS[player2_type](seed=seed+1)
+    try:
+        while not game.game_over:
+            legal = game.get_legal_actions()
+            pid = game.current_player
+            if built[pid] is None:
+                await websocket.send_json({"type": "choose_action", "game": "tile_tactics", "state": serialize_state(game.get_state()), "legal_actions": serialize_legal_actions(legal)})
+                msg = await websocket.receive_json()
+                action_id = msg.get("action_id") if msg.get("type") == "action" else None
+            else:
+                action_id = built[pid].choose_action(legal)
+            res = game.execute_action(action_id)
+            await websocket.send_json({"type": "turn_result", "turn": res.turn, "scores": res.scores, "action_id": res.action_id})
+            await asyncio.sleep(delay / 1000)
+        await websocket.send_json({"type": "game_end", "winner": game.winner, "scores": game.scores})
+    except WebSocketDisconnect:
+        return

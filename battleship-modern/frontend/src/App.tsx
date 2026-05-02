@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import { FleetCommander3DView } from './components/FleetCommander3DView'
 import { FleetCommanderTournament } from './components/FleetCommanderTournament'
+import { TileTacticsView } from './components/TileTacticsView'
 import './App.css'
 
-type View = 'home' | 'fleet-commander' | 'fleet-tournament'
+type View = 'home' | 'fleet-commander' | 'fleet-tournament' | 'tile-tactics'
 
 function App() {
   const [view, setView] = useState<View>('home')
@@ -31,7 +32,13 @@ function App() {
             className={view === 'fleet-tournament' ? 'active' : ''}
             onClick={() => setView('fleet-tournament')}
           >
-            Tournament
+            Fleet Tournament
+          </button>
+          <button
+            className={view === 'tile-tactics' ? 'active' : ''}
+            onClick={() => setView('tile-tactics')}
+          >
+            Tile Tactics
           </button>
         </nav>
       </header>
@@ -40,6 +47,7 @@ function App() {
         {view === 'home' && <HomeView onNavigate={setView} />}
         {view === 'fleet-commander' && <FleetCommander3DView />}
         {view === 'fleet-tournament' && <FleetCommanderTournament />}
+        {view === 'tile-tactics' && <TileTacticsView />}
       </main>
 
       <footer className="app-footer">
@@ -54,7 +62,7 @@ function HomeView({ onNavigate }: { onNavigate: (view: View) => void }) {
     <div className="home-view">
       <div className="hero">
         <div className="hero-content">
-          <h2>Fleet Commander</h2>
+          <h2>Agent Arena</h2>
           <p>
             3D space combat with 7 ship types, unique abilities, and a shrinking storm.
             Build your AI bot and compete in tournaments against other bots.
@@ -71,6 +79,11 @@ function HomeView({ onNavigate }: { onNavigate: (view: View) => void }) {
         <div className="feature-card highlight" onClick={() => onNavigate('fleet-tournament')}>
           <h3>Tournament</h3>
           <p>Run a tournament between multiple bots and watch them compete live</p>
+        </div>
+
+        <div className="feature-card highlight" onClick={() => onNavigate('tile-tactics')}>
+          <h3>Tile Tactics</h3>
+          <p>Beginner-friendly agent arena where bots pick legal action IDs</p>
         </div>
       </div>
 

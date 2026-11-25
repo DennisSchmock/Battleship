@@ -22,10 +22,16 @@ class TileTacticsGame:
         self.current_player = 0
         self.turn = 0
         self.scores = {0: 0, 1: 0}
-        self.remaining_pieces = {0: set(PIECES.keys()), 1: set(PIECES.keys())}
+        self.remaining_pieces = {
+            pid: {piece_id: config.pieces_per_type for piece_id in PIECES.keys()}
+            for pid in (0, 1)
+        }
         self.consecutive_passes = 0
         self.game_over = False
         self.winner = None
+
+    def piece_count(self, player_id: int, piece_id: str) -> int:
+        return self.remaining_pieces[player_id].get(piece_id, 0)
 
     def rotate_piece(self, cells, rotation):
         rot = rotation % 360
@@ -52,7 +58,8 @@ class TileTacticsGame:
         actions = []
         first_move = not self._has_own_cell(player_id)
         center = self.config.board_size // 2
-        for piece_id in sorted(self.remaining_pieces[player_id]):
+        available = [pid for pid, count in self.remaining_pieces[player_id].items() if count > 0]
+        for piece_id in sorted(available):
             for rotation in [0, 90, 180, 270]:
                 shape = self.rotate_piece(PIECES[piece_id], rotation)
                 for y in range(self.config.board_size):
@@ -89,7 +96,15 @@ class TileTacticsGame:
         return self.legal_actions_for(self.current_player)
 
     def get_state(self):
-        return GameState(turn=self.turn, current_player=self.current_player, board=deepcopy(self.board), scores=dict(self.scores), remaining_pieces={0: sorted(self.remaining_pieces[0]), 1: sorted(self.remaining_pieces[1])})
+        def expand(inv):
+            return sorted([pid for pid, count in inv.items() for _ in range(count)])
+        return GameState(
+            turn=self.turn,
+            current_player=self.current_player,
+            board=deepcopy(self.board),
+            scores=dict(self.scores),
+            remaining_pieces={0: expand(self.remaining_pieces[0]), 1: expand(self.remaining_pieces[1])},
+        )
 
     def visible_state(self):
         return asdict(self.get_state())
@@ -109,13 +124,16 @@ class TileTacticsGame:
         if chosen:
             for p in chosen.cells:
                 self.board[p.y][p.x] = pid
-            self.remaining_pieces[pid].discard(chosen.piece_id)
-            self.scores[pid] += len(chosen.cells)
+            self.remaining_pieces[pid][chosen.piece_id] = max(
+                0, self.remaining_pieces[pid].get(chosen.piece_id, 0) - 1
+            )
+            adjacency = chosen.heuristic.get("adjacent_own_cells", 0)
+            self.scores[pid] += len(chosen.cells) + adjacency * self.config.adjacency_bonus
             self.consecutive_passes = 0
         else:
             self.consecutive_passes += 1
         self.turn += 1
-        if self.consecutive_passes >= 2 or self.turn >= self.config.max_turns:
+        if self.consecutive_passes >= 1 or self.turn >= self.config.max_turns:
             self.game_over = True
             if self.scores[0] == self.scores[1]:
                 self.winner = None

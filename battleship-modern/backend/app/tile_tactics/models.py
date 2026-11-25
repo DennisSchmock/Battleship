@@ -40,9 +40,11 @@ class PlayerState:
 
 @dataclass
 class GameConfig:
-    board_size: int = 10
-    max_turns: int = 60
+    board_size: int = 7
+    max_turns: int = 200
     seed: int = 0
+    pieces_per_type: int = 3
+    adjacency_bonus: int = 1
 
 
 @dataclass
